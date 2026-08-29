@@ -242,7 +242,124 @@ export const initSockets = (httpServer) => {
       }
     });
 
-    // 3. DISCONNECT HANDLER
+    // 3. WEBRTC VOICE CALL SIGNALING HANDLERS
+    socket.on('voice:call:initiate', (data, ack) => {
+      try {
+        const { conversationId, bookingId, targetUserId, callerName, callerRole } = data || {};
+        const roomKey = conversationId || bookingId;
+        if (!roomKey) return;
+
+        console.log(`📞 Voice call initiated for [${roomKey}] by ${callerName} (${callerRole})`);
+
+        const incomingPayload = {
+          conversationId: roomKey,
+          bookingId: roomKey,
+          fromSocketId: socket.id,
+          callerName: callerName || 'Norozz User',
+          callerRole: callerRole || 'customer',
+          startedAt: new Date()
+        };
+
+        if (targetUserId) {
+          io.to(`user_${targetUserId}`).to(`customer_${targetUserId}`).to(`partner_${targetUserId}`).emit('voice:call:incoming', incomingPayload);
+        }
+
+        // Also broadcast to chat room
+        socket.to(`chat_booking_${roomKey}`).emit('voice:call:incoming', incomingPayload);
+
+        if (typeof ack === 'function') ack({ success: true, message: 'Call ringing...' });
+      } catch (err) {
+        console.error('Error in voice:call:initiate:', err);
+        if (typeof ack === 'function') ack({ success: false, error: err.message });
+      }
+    });
+
+    socket.on('voice:call:accept', (data, ack) => {
+      try {
+        const { conversationId, bookingId, calleeName } = data || {};
+        const roomKey = conversationId || bookingId;
+
+        console.log(`✅ Voice call accepted for [${roomKey}] by ${calleeName || 'callee'}`);
+
+        const acceptedPayload = {
+          conversationId: roomKey,
+          bookingId: roomKey,
+          acceptedBySocketId: socket.id,
+          acceptedAt: new Date()
+        };
+
+        socket.to(`chat_booking_${roomKey}`).emit('voice:call:accepted', acceptedPayload);
+        io.emit(`voice:call:accepted:${roomKey}`, acceptedPayload);
+
+        if (typeof ack === 'function') ack({ success: true });
+      } catch (err) {
+        console.error('Error in voice:call:accept:', err);
+      }
+    });
+
+    socket.on('voice:call:reject', (data, ack) => {
+      try {
+        const { conversationId, bookingId, reason } = data || {};
+        const roomKey = conversationId || bookingId;
+
+        console.log(`❌ Voice call rejected for [${roomKey}]`);
+
+        const rejectedPayload = {
+          conversationId: roomKey,
+          bookingId: roomKey,
+          reason: reason || 'User busy'
+        };
+
+        socket.to(`chat_booking_${roomKey}`).emit('voice:call:rejected', rejectedPayload);
+        io.emit(`voice:call:rejected:${roomKey}`, rejectedPayload);
+
+        if (typeof ack === 'function') ack({ success: true });
+      } catch (err) {
+        console.error('Error in voice:call:reject:', err);
+      }
+    });
+
+    socket.on('voice:call:end', (data, ack) => {
+      try {
+        const { conversationId, bookingId } = data || {};
+        const roomKey = conversationId || bookingId;
+
+        console.log(`📴 Voice call ended for [${roomKey}]`);
+
+        const endedPayload = {
+          conversationId: roomKey,
+          bookingId: roomKey,
+          endedBySocketId: socket.id,
+          endedAt: new Date()
+        };
+
+        socket.to(`chat_booking_${roomKey}`).emit('voice:call:ended', endedPayload);
+        io.emit(`voice:call:ended:${roomKey}`, endedPayload);
+
+        if (typeof ack === 'function') ack({ success: true });
+      } catch (err) {
+        console.error('Error in voice:call:end:', err);
+      }
+    });
+
+    socket.on('voice:signal', (data) => {
+      try {
+        const { conversationId, bookingId, signal } = data || {};
+        const roomKey = conversationId || bookingId;
+        if (!roomKey || !signal) return;
+
+        socket.to(`chat_booking_${roomKey}`).emit('voice:signal', {
+          conversationId: roomKey,
+          bookingId: roomKey,
+          senderSocketId: socket.id,
+          signal
+        });
+      } catch (err) {
+        console.error('Error in voice:signal relay:', err);
+      }
+    });
+
+    // 4. DISCONNECT HANDLER
     socket.on('disconnect', () => {
       console.log(`🔌 Client disconnected: ${socket.id}`);
       if (socket.partnerId && partnerSocketsMap.has(socket.partnerId)) {
