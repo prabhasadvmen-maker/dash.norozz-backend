@@ -60,6 +60,11 @@ export class BookingController extends BaseController {
     const booking = await bookingService.getBookingById(req.params.id);
     return this.sendSuccess(res, booking, 'Booking details retrieved successfully');
   });
+
+  getPartnerPublicProfile = asyncHandler(async (req, res) => {
+    const profile = await bookingService.getPartnerPublicProfile(req.params.partnerId);
+    return this.sendSuccess(res, profile, 'Partner public profile retrieved successfully');
+  });
 }
 
 export const bookingController = new BookingController();

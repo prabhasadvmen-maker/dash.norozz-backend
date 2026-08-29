@@ -95,7 +95,7 @@ export const getPartnerOnboardingStatus = (user) => {
     isWorkingHoursSet
   );
 
-  const isKycSubmitted = Boolean(user.isKycSubmitted || isDocumentsUploaded || isAllCompleted);
+  const isKycSubmitted = Boolean(user.isKycSubmitted || isAllCompleted);
   const kycStatus = user.kycStatus || 'pending';
 
   // Compute next step strictly in requested order:
@@ -279,11 +279,15 @@ export class PartnerAuthService {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner account not found');
     }
 
-    const allowedFields = ['name', 'agencyName', 'email', 'phone', 'dob', 'gender', 'assignedCity', 'city', 'category', 'address', 'profileImage'];
+    const allowedFields = [
+      'name', 'agencyName', 'dob', 'gender',
+      'assignedCity', 'city', 'category', 'address', 'profileImage',
+      'bankDetails', 'experience', 'workRadius', 'localities', 'workingHours', 'referralCode'
+    ];
     const sanitizedData = {};
 
     for (const field of allowedFields) {
-      if (updateData[field] !== undefined && updateData[field] !== '') {
+      if (updateData[field] !== undefined) {
         sanitizedData[field] = updateData[field];
       }
     }
@@ -584,11 +588,8 @@ export class PartnerAuthService {
     const hasAadhaar = Boolean((updatedDocs.aadhaarFront && updatedDocs.aadhaarBack) || updatedDocs.aadhaarDoc);
     const hasOtherKycDoc = Boolean(updatedDocs.panDoc || updatedDocs.passportPhoto || updatedDocs.drivingLicenseDoc || updatedDocs.bankPassbookDoc || partner.profileImage);
     partner.isDocumentsUploaded = Boolean(hasAadhaar || hasOtherKycDoc || Object.keys(documentsData).length > 0);
-    if (partner.isDocumentsUploaded || Object.keys(documentsData).length > 0) {
-      partner.isKycSubmitted = true;
-      if (!partner.kycStatus || partner.kycStatus === 'rejected') {
-        partner.kycStatus = 'pending';
-      }
+    if (!partner.kycStatus || partner.kycStatus === 'rejected') {
+      partner.kycStatus = 'pending';
     }
 
     await partner.save();
@@ -812,7 +813,7 @@ export class PartnerAuthService {
       agencyName: partner.agencyName,
       name: partner.name,
       kycStatus: partner.kycStatus,
-      isKycSubmitted: isApproved || partner.isKycSubmitted || statusInfo.onboardingStatus.isDocumentsUploaded || false,
+      isKycSubmitted: isApproved || partner.isKycSubmitted || statusInfo.onboardingStatus.isAllCompleted || false,
       isProfileCompleted: isApproved || statusInfo.onboardingStatus.isProfileCompleted,
       isDocumentsUploaded: isApproved || statusInfo.onboardingStatus.isDocumentsUploaded,
       isBookingUnlocked: isApproved,

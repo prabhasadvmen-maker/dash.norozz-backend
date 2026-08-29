@@ -62,7 +62,12 @@ export class PartnerDashboardController extends BaseController {
 
   getEarnings = asyncHandler(async (req, res) => {
     const earnings = await partnerDashboardService.getEarnings(req.user);
-    return this.sendSuccess(res, earnings, 'Monthly earnings retrieved successfully');
+    return this.sendSuccess(res, earnings, 'Earnings & performance analytics retrieved successfully');
+  });
+
+  requestWithdrawal = asyncHandler(async (req, res) => {
+    const result = await partnerDashboardService.requestWithdrawal(req.user._id, req.body.amount);
+    return this.sendSuccess(res, result, result.message);
   });
 
   getRating = asyncHandler(async (req, res) => {
@@ -103,6 +108,36 @@ export class PartnerDashboardController extends BaseController {
   getNotifications = asyncHandler(async (req, res) => {
     const notifs = await partnerDashboardService.getNotifications(req.user);
     return this.sendSuccess(res, notifs, 'Partner notifications retrieved successfully');
+  });
+
+  updateSettingsPreferences = asyncHandler(async (req, res) => {
+    const result = await partnerDashboardService.updateSettingsPreferences(req.user._id, req.body);
+    return this.sendSuccess(res, result, result.message);
+  });
+
+  changePassword = asyncHandler(async (req, res) => {
+    const result = await partnerDashboardService.changePassword(req.user._id, req.body);
+    return this.sendSuccess(res, result, result.message);
+  });
+
+  submitComplaint = asyncHandler(async (req, res) => {
+    const complaint = await partnerDashboardService.submitComplaint(req.user._id, req.body);
+    return this.sendSuccess(res, complaint, 'Complaint submitted successfully');
+  });
+
+  getComplaints = asyncHandler(async (req, res) => {
+    const complaints = await partnerDashboardService.getComplaints(req.user._id);
+    return this.sendSuccess(res, complaints, 'Complaints list retrieved successfully');
+  });
+
+  getChatMessages = asyncHandler(async (req, res) => {
+    const messages = await partnerDashboardService.getChatMessages(req.user._id);
+    return this.sendSuccess(res, messages, 'Support chat messages retrieved successfully');
+  });
+
+  sendChatMessage = asyncHandler(async (req, res) => {
+    const messages = await partnerDashboardService.sendChatMessage(req.user._id, req.body);
+    return this.sendSuccess(res, messages, 'Chat message sent successfully');
   });
 }
 

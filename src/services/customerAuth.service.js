@@ -330,11 +330,25 @@ export class CustomerAuthService {
     const user = await userRepository.findById(customerId);
     if (!user) throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Customer not found');
 
-    if (addressData.isDefault) {
+    const formatted = {
+      title: addressData.title || addressData.label || 'Home',
+      addressLine: addressData.addressLine || addressData.street || addressData.address || 'Saved Address Location',
+      city: addressData.city || 'Mumbai',
+      state: addressData.state || 'Maharashtra',
+      pincode: addressData.pincode || addressData.zipCode || '400053',
+      isDefault: Boolean(addressData.isDefault || user.addresses.length === 0),
+    };
+
+    if (formatted.isDefault) {
       user.addresses.forEach(a => { a.isDefault = false; });
     }
 
-    user.addresses.push(addressData);
+    user.addresses.push(formatted);
+
+    // Also update main user.address for instant profile compatibility
+    user.address = formatted.addressLine;
+    user.city = formatted.city;
+
     await user.save();
 
     return { message: 'Address added successfully', addresses: user.addresses };
@@ -352,11 +366,20 @@ export class CustomerAuthService {
     const addr = user.addresses.id(addressId);
     if (!addr) throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Address record not found');
 
-    if (updateData.isDefault) {
+    const formatted = {
+      title: updateData.title || updateData.label || addr.title,
+      addressLine: updateData.addressLine || updateData.street || updateData.address || addr.addressLine,
+      city: updateData.city || addr.city,
+      state: updateData.state || addr.state,
+      pincode: updateData.pincode || updateData.zipCode || addr.pincode,
+      isDefault: updateData.isDefault !== undefined ? Boolean(updateData.isDefault) : addr.isDefault,
+    };
+
+    if (formatted.isDefault) {
       user.addresses.forEach(a => { a.isDefault = false; });
     }
 
-    Object.assign(addr, updateData);
+    Object.assign(addr, formatted);
     await user.save();
 
     return { message: 'Address updated successfully', addresses: user.addresses };

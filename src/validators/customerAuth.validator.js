@@ -45,19 +45,25 @@ export const updateCustomerProfileRules = [
 ];
 
 export const addAddressRules = [
-  body('addressLine').trim().notEmpty().withMessage('Address Line is required'),
-  body('city').trim().notEmpty().withMessage('City is required'),
+  body('addressLine').optional().trim(),
+  body('street').optional().trim(),
+  body('address').optional().trim(),
+  body('city').optional().trim(),
   body('title').optional().trim(),
   body('state').optional().trim(),
   body('pincode').optional().trim(),
-  body('isDefault').optional().isBoolean(),
+  body('zipCode').optional().trim(),
+  body('isDefault').optional(),
 ];
 
 export const updateAddressRules = [
-  body('addressLine').optional().trim().notEmpty().withMessage('Address Line cannot be empty'),
-  body('city').optional().trim().notEmpty().withMessage('City cannot be empty'),
+  body('addressLine').optional().trim(),
+  body('street').optional().trim(),
+  body('address').optional().trim(),
+  body('city').optional().trim(),
   body('title').optional().trim(),
   body('state').optional().trim(),
   body('pincode').optional().trim(),
-  body('isDefault').optional().isBoolean(),
+  body('zipCode').optional().trim(),
+  body('isDefault').optional(),
 ];

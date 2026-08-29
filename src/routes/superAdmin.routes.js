@@ -27,10 +27,21 @@ router.put('/city-admins/:id', updateCityAdminRules, validate, superAdminControl
 router.delete('/city-admins/:id', superAdminController.deleteCityAdmin);
 router.patch('/city-admins/:id/status', updateCityAdminStatusRules, validate, superAdminController.suspendCityAdmin);
 router.patch('/city-admins/:id/reset-password', resetCityAdminPasswordRules, validate, superAdminController.resetCityAdminPassword);
+router.post('/city-admins/:id/impersonate', superAdminController.impersonateCityAdmin);
 
 // Master Platform Directories
 router.get('/customers', superAdminController.getCustomers);
 router.get('/partners', superAdminController.getPartners);
 router.get('/bookings', superAdminController.getBookings);
+
+// Global Referral Bonus Settings
+router.get('/referral-settings', superAdminController.getReferralSettings);
+router.put('/referral-settings', superAdminController.updateReferralSettings);
+
+// Coupon Management CRUD
+router.get('/coupons', superAdminController.getCoupons);
+router.post('/coupons', superAdminController.createCoupon);
+router.put('/coupons/:id', superAdminController.updateCoupon);
+router.delete('/coupons/:id', superAdminController.deleteCoupon);
 
 export default router;

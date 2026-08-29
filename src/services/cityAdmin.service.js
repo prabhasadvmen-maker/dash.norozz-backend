@@ -1,5 +1,6 @@
 import { userRepository } from '../repositories/user.repository.js';
 import { bookingRepository } from '../repositories/booking.repository.js';
+import { Category } from '../models/category.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { ROLES } from '../constants/roles.constant.js';
@@ -10,6 +11,37 @@ export class CityAdminService {
   matchesCity(entity, assignedCity) {
     const city = entity.assignedCity || entity.city || 'Delhi NCR';
     return city.toLowerCase() === assignedCity.toLowerCase();
+  }
+
+  async populateCategoryNames(partnerList) {
+    if (!Array.isArray(partnerList) || partnerList.length === 0) return partnerList;
+
+    const categories = await Category.find({}).lean();
+    const catMap = {};
+    categories.forEach((c) => {
+      catMap[String(c._id)] = c.name;
+    });
+
+    return partnerList.map((p) => {
+      const pObj = typeof p.toObject === 'function' ? p.toObject() : { ...p };
+      delete pObj.password;
+      delete pObj.refreshToken;
+
+      let catDisplay = '';
+      if (pObj.category && !pObj.category.match(/^[0-9a-fA-F]{24}$/)) {
+        catDisplay = pObj.category;
+      } else if (pObj.category && catMap[pObj.category]) {
+        catDisplay = catMap[pObj.category];
+      } else if (Array.isArray(pObj.categories) && pObj.categories.length > 0) {
+        const names = pObj.categories
+          .map((c) => (typeof c === 'object' && c?.name ? c.name : catMap[String(c)] || null))
+          .filter(Boolean);
+        if (names.length > 0) catDisplay = names.join(', ');
+      }
+
+      pObj.category = catDisplay || 'General Service Technician';
+      return pObj;
+    });
   }
 
   // 1. CITY DASHBOARD
@@ -45,7 +77,8 @@ export class CityAdminService {
   // 2. PARTNER MANAGEMENT & KYC VERIFICATION
   async getCityPartners(assignedCity) {
     const allPartners = await userRepository.find({ role: ROLES.PARTNER }, '-password', { createdAt: -1 });
-    return allPartners.filter(p => this.matchesCity(p, assignedCity));
+    const filtered = allPartners.filter(p => this.matchesCity(p, assignedCity));
+    return await this.populateCategoryNames(filtered);
   }
 
   async approvePartner(partnerId, assignedCity) {
@@ -81,6 +114,29 @@ export class CityAdminService {
     await partner.save();
 
     return { message: `Partner '${partner.name}' KYC rejected: ${reason}`, partner };
+  }
+
+  async updateDocumentStatus(partnerId, docKey, status, rejectionReason, assignedCity) {
+    const partner = await userRepository.findById(partnerId);
+    if (!partner || partner.role !== ROLES.PARTNER || !this.matchesCity(partner, assignedCity)) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found in your assigned city jurisdiction');
+    }
+
+    if (!partner.documents) partner.documents = {};
+    if (!partner.documents.statuses) partner.documents.statuses = {};
+    if (!partner.documents.rejectionReasons) partner.documents.rejectionReasons = {};
+
+    partner.documents.statuses[docKey] = status;
+    if (rejectionReason) {
+      partner.documents.rejectionReasons[docKey] = rejectionReason;
+    } else if (status === 'approved') {
+      partner.documents.rejectionReasons[docKey] = '';
+    }
+
+    partner.markModified('documents');
+    await partner.save();
+
+    return { message: `Document '${docKey}' marked as '${status}' successfully`, partner };
   }
 
   async verifyKyc(partnerId, assignedCity) {

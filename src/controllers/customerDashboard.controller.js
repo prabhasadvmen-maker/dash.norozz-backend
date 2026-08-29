@@ -25,8 +25,13 @@ export class CustomerDashboardController extends BaseController {
   });
 
   getOffers = asyncHandler(async (req, res) => {
-    const offers = await customerDashboardService.getOffers();
+    const offers = await customerDashboardService.getOffers(req.user);
     return this.sendSuccess(res, offers, 'Promotional offers and coupons retrieved successfully');
+  });
+
+  applyCoupon = asyncHandler(async (req, res) => {
+    const result = await customerDashboardService.applyCoupon(req.user, req.body);
+    return this.sendSuccess(res, result, result.message);
   });
 
   getWallet = asyncHandler(async (req, res) => {
@@ -73,6 +78,16 @@ export class CustomerDashboardController extends BaseController {
   getCancelledBookings = asyncHandler(async (req, res) => {
     const cancelled = await customerDashboardService.getCancelledBookings(req.user);
     return this.sendSuccess(res, cancelled, 'Cancelled bookings retrieved successfully');
+  });
+
+  getReferralData = asyncHandler(async (req, res) => {
+    const data = await customerDashboardService.getReferralData(req.user);
+    return this.sendSuccess(res, data, 'Customer referral data retrieved successfully');
+  });
+
+  sendReferralInvite = asyncHandler(async (req, res) => {
+    const result = await customerDashboardService.sendReferralInvite(req.user, req.body);
+    return this.sendSuccess(res, result, result.message);
   });
 }
 

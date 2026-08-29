@@ -41,6 +41,11 @@ export class SuperAdminController extends BaseController {
     return this.sendSuccess(res, result, result.message);
   });
 
+  impersonateCityAdmin = asyncHandler(async (req, res) => {
+    const result = await superAdminService.impersonateCityAdmin(req.params.id);
+    return this.sendSuccess(res, result, result.message);
+  });
+
   getCustomers = asyncHandler(async (req, res) => {
     const customers = await superAdminService.getAllCustomers();
     return this.sendSuccess(res, customers, 'Customers directory retrieved successfully');
@@ -54,6 +59,37 @@ export class SuperAdminController extends BaseController {
   getBookings = asyncHandler(async (req, res) => {
     const bookings = await superAdminService.getAllBookings();
     return this.sendSuccess(res, bookings, 'Platform bookings master log retrieved successfully');
+  });
+
+  getReferralSettings = asyncHandler(async (req, res) => {
+    const settings = await superAdminService.getReferralSettings();
+    return this.sendSuccess(res, settings, 'Referral settings retrieved successfully');
+  });
+
+  updateReferralSettings = asyncHandler(async (req, res) => {
+    const result = await superAdminService.updateReferralSettings(req.body);
+    return this.sendSuccess(res, result, result.message);
+  });
+
+  // Coupons CRUD
+  getCoupons = asyncHandler(async (req, res) => {
+    const coupons = await superAdminService.getAllCoupons();
+    return this.sendSuccess(res, coupons, 'Coupons directory retrieved successfully');
+  });
+
+  createCoupon = asyncHandler(async (req, res) => {
+    const result = await superAdminService.createCoupon(req.body);
+    return this.sendCreated(res, result.coupon, result.message);
+  });
+
+  updateCoupon = asyncHandler(async (req, res) => {
+    const result = await superAdminService.updateCoupon(req.params.id, req.body);
+    return this.sendSuccess(res, result.coupon, result.message);
+  });
+
+  deleteCoupon = asyncHandler(async (req, res) => {
+    const result = await superAdminService.deleteCoupon(req.params.id);
+    return this.sendSuccess(res, result, result.message);
   });
 }
 

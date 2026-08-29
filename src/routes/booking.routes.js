@@ -17,6 +17,7 @@ router.use(verifyJWT);
 
 // Customer Booking Lifecycle & Orders
 router.get('/my-bookings', bookingController.getMyBookings);
+router.get('/partner-profile/:partnerId', bookingController.getPartnerPublicProfile);
 router.get('/:id', bookingController.getBookingById);
 router.post('/', createBookingRules, validate, bookingController.createBooking);
 router.post('/:id/pay', payBookingRules, validate, bookingController.processPayment);

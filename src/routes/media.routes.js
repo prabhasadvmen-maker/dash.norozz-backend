@@ -23,6 +23,13 @@ router.get('/*', async (req, res) => {
 
     const s3Object = await r2StorageService.getFileObject(key);
 
+    // Allow cross-origin image loading in browsers (prevents ERR_BLOCKED_BY_RESPONSE.NotSameOrigin)
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.removeHeader('Content-Security-Policy');
+    res.removeHeader('Cross-Origin-Opener-Policy');
+
     if (s3Object.ContentType) {
       res.setHeader('Content-Type', s3Object.ContentType);
     }

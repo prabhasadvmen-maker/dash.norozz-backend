@@ -67,6 +67,25 @@ export const initSockets = (httpServer) => {
       }
     });
 
+    // 1a. CUSTOMER / USER JOIN ROOM
+    socket.on('join_user', async (data) => {
+      try {
+        const { userId } = data || {};
+        if (!userId) return;
+
+        socket.userId = userId;
+        const userRoom = `user_${userId}`;
+        const customerRoom = `customer_${userId}`;
+        socket.join(userRoom);
+        socket.join(customerRoom);
+
+        console.log(`👤 Customer/User ${userId} joined socket room: [${userRoom}] & [${customerRoom}]`);
+        socket.emit('user_connected', { success: true, userId });
+      } catch (err) {
+        console.error('Error in join_user socket handler:', err);
+      }
+    });
+
     // 1b. JOIN BOOKING CHAT ROOM
     socket.on('join_chat_room', (data) => {
       try {
@@ -118,6 +137,23 @@ export const initSockets = (httpServer) => {
 
         // Broadcast to all sockets in the chat room
         io.to(chatRoom).emit('new_chat_message', msgPayload);
+
+        // Target customer & partner user rooms directly so background socket listeners receive the message
+        try {
+          const bookingObj = await bookingRepository.model.findById(bookingId).select('customer partner');
+          if (bookingObj) {
+            if (bookingObj.customer) {
+              const custIdStr = bookingObj.customer.toString();
+              io.to(`user_${custIdStr}`).to(`customer_${custIdStr}`).emit('new_chat_message', msgPayload);
+            }
+            if (bookingObj.partner) {
+              const partnerIdStr = bookingObj.partner.toString();
+              io.to(`partner_${partnerIdStr}`).to(`user_${partnerIdStr}`).emit('new_chat_message', msgPayload);
+            }
+          }
+        } catch (e) {
+          console.warn('Could not fetch booking customer/partner for direct room emit:', e);
+        }
 
         // Also broadcast global chat notification event for sound & toast alerts across app
         io.emit('new_chat_notification', msgPayload);

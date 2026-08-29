@@ -39,7 +39,7 @@ const serviceSchema = new mongoose.Schema(
     },
     price: {
       type: Number,
-      required: [true, 'Service Price is required'],
+      default: 0,
       min: 0,
     },
     discount: {

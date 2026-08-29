@@ -36,7 +36,6 @@ export const partnerOtpVerifyRules = [
 
 export const updatePartnerProfileRules = [
   body('name').optional().trim().notEmpty().withMessage('Name cannot be empty'),
-  body('email').optional().isEmail().withMessage('Valid email address is required'),
   body('dob').optional().trim(),
   body('gender').optional().trim(),
   body('assignedCity').optional().trim(),

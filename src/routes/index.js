@@ -17,6 +17,9 @@ import mediaRoutes from './media.routes.js';
 import chatRoutes from './chat.routes.js';
 import skillRoutes from './skill.routes.js';
 import cityRoutes from './city.routes.js';
+import financialRoutes from './financial.routes.js';
+import reviewRoutes from './review.routes.js';
+import servicePackageRoutes from './servicePackage.routes.js';
 
 const router = Router();
 
@@ -32,6 +35,7 @@ router.use('/categories', categoryRoutes);
 router.use('/skills', skillRoutes);
 router.use('/sub-categories', subCategoryRoutes);
 router.use('/services', serviceRoutes);
+router.use('/packages', servicePackageRoutes);
 router.use('/bookings', bookingRoutes);
 router.use('/dispatch', autoAssignmentRoutes);
 router.use('/payments', paymentRoutes);
@@ -39,5 +43,9 @@ router.use('/media', mediaRoutes);
 router.use('/chat', chatRoutes);
 router.use('/cities', cityRoutes);
 router.use('/super-admin/cities', cityRoutes);
+router.use('/wallet', financialRoutes);
+router.use('/admin', financialRoutes);
+router.use('/reviews', reviewRoutes);
+router.use('/admin/reviews', reviewRoutes);
 
 export default router;

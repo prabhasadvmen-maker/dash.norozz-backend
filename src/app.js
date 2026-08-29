@@ -49,8 +49,13 @@ app.use(
 // Enable Pre-Flight CORS response for all routes
 app.options('*', cors());
 
-// Security Middlewares & Rate Limiting
-app.use(helmet());
+// Security Middlewares & Rate Limiting (Allow cross-origin resource policy for media/images)
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginEmbedderPolicy: false,
+  })
+);
 app.use(generalApiRateLimiter);
 
 // Logging Middleware

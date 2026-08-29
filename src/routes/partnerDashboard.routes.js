@@ -31,6 +31,7 @@ router.post('/bookings/:id/add-extra-service', partnerDashboardController.addExt
 
 // Wallet & Financials
 router.get('/wallet', partnerDashboardController.getWallet);
+router.post('/wallet/withdraw', partnerDashboardController.requestWithdrawal);
 router.get('/earnings', partnerDashboardController.getEarnings);
 
 // Ratings & Customer Reviews
@@ -48,5 +49,13 @@ router.put('/availability', updateAvailabilityRules, validate, partnerDashboardC
 // Documents & Notifications Feed
 router.get('/documents', partnerDashboardController.getDocuments);
 router.get('/notifications', partnerDashboardController.getNotifications);
+
+// Settings, Password, Complaints & Live Chat Endpoints
+router.put('/settings/preferences', partnerDashboardController.updateSettingsPreferences);
+router.post('/settings/change-password', partnerDashboardController.changePassword);
+router.post('/complaints', partnerDashboardController.submitComplaint);
+router.get('/complaints', partnerDashboardController.getComplaints);
+router.get('/chat', partnerDashboardController.getChatMessages);
+router.post('/chat', partnerDashboardController.sendChatMessage);
 
 export default router;

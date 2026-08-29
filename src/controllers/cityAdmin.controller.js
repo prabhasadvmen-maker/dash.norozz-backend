@@ -29,6 +29,13 @@ export class CityAdminController extends BaseController {
     return this.sendSuccess(res, result, result.message);
   });
 
+  updateDocumentStatus = asyncHandler(async (req, res) => {
+    const assignedCity = req.user.assignedCity || 'Delhi NCR';
+    const { docKey, status, rejectionReason } = req.body;
+    const result = await cityAdminService.updateDocumentStatus(req.params.id, docKey, status, rejectionReason, assignedCity);
+    return this.sendSuccess(res, result, result.message);
+  });
+
   verifyKyc = asyncHandler(async (req, res) => {
     const assignedCity = req.user.assignedCity || 'Delhi NCR';
     const result = await cityAdminService.verifyKyc(req.params.id, assignedCity);

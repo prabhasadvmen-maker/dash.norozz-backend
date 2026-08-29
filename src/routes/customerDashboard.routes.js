@@ -18,6 +18,7 @@ router.get('/categories', customerDashboardController.getCategories);
 router.get('/services/popular', customerDashboardController.getPopularServices);
 router.get('/services/featured', customerDashboardController.getFeaturedServices);
 router.get('/offers', customerDashboardController.getOffers);
+router.post('/coupons/apply', customerDashboardController.applyCoupon);
 
 // Wallet & Customer Feeds
 router.get('/wallet', customerDashboardController.getWallet);
@@ -33,5 +34,9 @@ router.get('/bookings/history', customerDashboardController.getBookingHistory);
 router.get('/bookings/upcoming', customerDashboardController.getUpcomingBookings);
 router.get('/bookings/completed', customerDashboardController.getCompletedBookings);
 router.get('/bookings/cancelled', customerDashboardController.getCancelledBookings);
+
+// Referral System Endpoints
+router.get('/referral', customerDashboardController.getReferralData);
+router.post('/referral/invite', customerDashboardController.sendReferralInvite);
 
 export default router;

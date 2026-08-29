@@ -24,6 +24,7 @@ router.get('/revenue', cityAdminController.getRevenue);
 router.get('/partners', cityAdminController.getPartners);
 router.patch('/partners/:id/approve', cityAdminController.approvePartner);
 router.patch('/partners/:id/reject', rejectPartnerRules, validate, cityAdminController.rejectPartner);
+router.patch('/partners/:id/documents/status', cityAdminController.updateDocumentStatus);
 router.patch('/partners/:id/verify-kyc', cityAdminController.verifyKyc);
 router.patch('/partners/:id/suspend', cityAdminController.suspendPartner);
 router.patch('/partners/:id/activate', cityAdminController.activatePartner);
