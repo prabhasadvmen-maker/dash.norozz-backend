@@ -15,7 +15,7 @@ const router = Router();
 
 // Protect ALL Super Admin endpoints with JWT + SuperAdmin RBAC
 router.use(verifyJWT);
-router.use(authorizeRoles(ROLES.SUPER_ADMIN));
+router.use(authorizeRoles(ROLES.SUPER_ADMIN, ROLES.ADMIN));
 
 // Dashboard Statistics & Analytics
 router.get('/dashboard', superAdminController.getDashboard);
@@ -28,6 +28,8 @@ router.delete('/city-admins/:id', superAdminController.deleteCityAdmin);
 router.patch('/city-admins/:id/status', updateCityAdminStatusRules, validate, superAdminController.suspendCityAdmin);
 router.patch('/city-admins/:id/reset-password', resetCityAdminPasswordRules, validate, superAdminController.resetCityAdminPassword);
 router.post('/city-admins/:id/impersonate', superAdminController.impersonateCityAdmin);
+router.post('/city-admin/:id/impersonate', superAdminController.impersonateCityAdmin);
+router.post('/impersonate/:id', superAdminController.impersonateCityAdmin);
 
 // Master Platform Directories
 router.get('/customers', superAdminController.getCustomers);
