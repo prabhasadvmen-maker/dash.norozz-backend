@@ -61,9 +61,9 @@ export class PartnerDashboardService {
         todaysJobs: todaysJobs,
         pendingJobs: pendingJobs,
         completedJobs: completedJobs,
-        walletBalance: 12450,
-        monthlyEarnings: 68500,
-        rating: '4.85',
+        walletBalance: partnerUser?.walletBalance || partnerUser?.availableBalance || 0,
+        monthlyEarnings: partnerUser?.lifetimeEarnings || 0,
+        rating: partnerUser?.averageRating ? partnerUser.averageRating.toFixed(1) : '5.0',
         activeWorkers: 1,
       },
       recentBookings: partnerBookings.slice(0, 10),
@@ -207,12 +207,25 @@ export class PartnerDashboardService {
       .filter((t) => t.type === 'Credit')
       .reduce((sum, t) => sum + (t.amount || 0), 0);
 
+    // Auto-cleanup legacy 12450 default balance for old accounts without transactions
+    if (p && (p.walletBalance === 12450 || p.availableBalance === 12450) && transactions.length === 0) {
+      p.walletBalance = 0;
+      p.availableBalance = 0;
+      p.withdrawableBalance = 0;
+      p.lifetimeEarnings = 0;
+      await p.save();
+    }
+
+    const currentBal = (p?.walletBalance === 12450 || p?.availableBalance === 12450) && transactions.length === 0
+      ? 0
+      : (p?.walletBalance ?? 0);
+
     return {
       partnerId: partner._id,
-      walletBalance: p?.walletBalance ?? 12450,
-      securityDeposit: p?.securityDeposit ?? 2000,
-      pendingClearance: 1200,
-      totalEarned: Math.max(85200, (p?.walletBalance ?? 12450) + totalCredits),
+      walletBalance: currentBal,
+      securityDeposit: p?.securityDeposit ?? 0,
+      pendingClearance: p?.pendingBalance ?? 0,
+      totalEarned: p?.lifetimeEarnings ?? totalCredits,
       bankDetails: p?.bankDetails || {},
       transactions,
     };
@@ -220,7 +233,7 @@ export class PartnerDashboardService {
 
   async getEarnings(partner) {
     const p = await userRepository.findById(partner._id);
-    const balance = p?.walletBalance ?? 12450;
+    const balance = p?.walletBalance ?? p?.availableBalance ?? 0;
 
     // Query real completed bookings from MongoDB
     const completedBookings = await bookingRepository.model

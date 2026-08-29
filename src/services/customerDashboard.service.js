@@ -13,6 +13,20 @@ export class CustomerDashboardService {
     const user = await userRepository.findById(customer._id);
     const recentBookings = await bookingRepository.find({ customer: customer._id }, '', { createdAt: -1 });
 
+    // Auto-cleanup legacy 12450 default from old schema if user has no transactions
+    let userWalletBal = user?.walletBalance || 0;
+    if (userWalletBal === 12450 || user?.availableBalance === 12450) {
+      const { WalletTransaction } = await import('../models/walletTransaction.model.js');
+      const txCount = await WalletTransaction.countDocuments({ user: customer._id });
+      if (txCount === 0) {
+        user.walletBalance = 0;
+        user.availableBalance = 0;
+        user.withdrawableBalance = 0;
+        await user.save();
+        userWalletBal = 0;
+      }
+    }
+
     return {
       banners: [
         { id: 1, title: 'AC Jet Deep Cleaning', discount: 'Flat 50% OFF', code: 'SUMMER50', bg: 'linear-gradient(135deg, #2563eb, #7c3aed)' },
@@ -21,10 +35,10 @@ export class CustomerDashboardService {
       categories: await this.getCategories(),
       popularServices: await this.getPopularServices(),
       featuredServices: await this.getFeaturedServices(),
-      offers: await this.getOffers(),
-      walletBalance: 450,
-      favoriteServices: user.favoriteServices || [],
-      savedAddresses: user.addresses || [],
+      offers: await this.getOffers(customer),
+      walletBalance: userWalletBal,
+      favoriteServices: user?.favoriteServices || [],
+      savedAddresses: user?.addresses || [],
       recentBookings: recentBookings.slice(0, 3),
     };
   }
@@ -167,14 +181,41 @@ export class CustomerDashboardService {
 
   // 3. WALLET, NOTIFICATIONS & REVIEWS
   async getWallet(customer) {
+    const user = await userRepository.findById(customer._id);
+    const { WalletTransaction } = await import('../models/walletTransaction.model.js');
+    const { LedgerEntry } = await import('../models/ledgerEntry.model.js');
+
+    let transactions = await WalletTransaction.find({ user: customer._id }).sort({ createdAt: -1 });
+
+    if (transactions.length === 0) {
+      const ledgers = await LedgerEntry.find({ userId: customer._id }).sort({ createdAt: -1 });
+      transactions = ledgers.map((l, idx) => ({
+        id: l._id || `WAL-${idx + 1}`,
+        amount: l.amount || 0,
+        type: l.type === 'CREDIT' ? 'Credit' : 'Debit',
+        desc: l.description || l.title || 'Wallet Activity',
+        title: l.description || l.title || 'Wallet Activity',
+        date: new Date(l.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
+      }));
+
+      // Auto-cleanup legacy 12450 default balance for old accounts without transactions
+      if (ledgers.length === 0 && (user?.walletBalance === 12450 || user?.availableBalance === 12450)) {
+        user.walletBalance = 0;
+        user.availableBalance = 0;
+        user.withdrawableBalance = 0;
+        await user.save();
+      }
+    }
+
+    const currentBal = (user?.walletBalance === 12450 || user?.availableBalance === 12450) && transactions.length === 0
+      ? 0
+      : (user?.walletBalance ?? 0);
+
     return {
       customerId: customer._id,
-      balance: 450,
+      balance: currentBal,
       currency: 'INR',
-      transactions: [
-        { id: 'WAL-1', amount: 100, type: 'Credit', desc: 'Welcome Bonus Cash', date: '28 July 2026' },
-        { id: 'WAL-2', amount: 350, type: 'Credit', desc: 'Referral Cash Bonus', date: '20 July 2026' },
-      ],
+      transactions,
     };
   }
 

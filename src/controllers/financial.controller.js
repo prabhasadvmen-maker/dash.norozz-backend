@@ -66,12 +66,12 @@ export class FinancialController {
       res.status(HTTP_STATUS.OK).json({
         success: true,
         data: {
-          availableBalance: user.availableBalance || user.walletBalance || 12450,
-          withdrawableBalance: user.withdrawableBalance || 12450,
+          availableBalance: user.availableBalance || user.walletBalance || 0,
+          withdrawableBalance: user.withdrawableBalance || user.walletBalance || 0,
           pendingBalance: user.pendingBalance || 0,
           withdrawalPending: user.withdrawalPending || 0,
-          lifetimeEarnings: user.lifetimeEarnings || 85200,
-          totalCommissionPaid: user.totalCommissionPaid || 4260,
+          lifetimeEarnings: user.lifetimeEarnings || 0,
+          totalCommissionPaid: user.totalCommissionPaid || 0,
           bankDetails: user.bankDetails || {},
           transactions: ledgerEntries,
         },
