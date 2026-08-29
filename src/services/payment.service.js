@@ -102,15 +102,73 @@ export class PaymentService {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Booking not found');
     }
 
+    const { userRepository } = await import('../repositories/user.repository.js');
+    const customerUser = await userRepository.findById(user._id);
+    if (!customerUser) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Customer user account not found');
+    }
+
+    const requiredAmount = Number(amount || booking.amount || 0);
+    const availableWalletBal = customerUser.walletBalance || 0;
+
+    if (availableWalletBal < requiredAmount) {
+      throw new ApiError(
+        HTTP_STATUS.BAD_REQUEST,
+        `Insufficient NOROZZ Wallet balance! Your available balance is ₹${availableWalletBal}, but required amount is ₹${requiredAmount}.`
+      );
+    }
+
+    // Deduct payable amount from customer wallet balance
+    const previousBal = availableWalletBal;
+    const newBal = previousBal - requiredAmount;
+
+    customerUser.walletBalance = newBal;
+    customerUser.availableBalance = Math.max(0, (customerUser.availableBalance || 0) - requiredAmount);
+    await customerUser.save();
+
     const transactionId = this.generateTxnId();
     const invoiceNumber = this.generateInvoiceNo();
 
+    // 1. Create WalletTransaction log (Debit)
+    const { WalletTransaction } = await import('../models/walletTransaction.model.js');
+    await WalletTransaction.create({
+      transactionId,
+      user: user._id,
+      type: 'Debit',
+      category: 'Service Booking',
+      title: `Service Payment (${booking.packageName || 'Home Service'})`,
+      amount: requiredAmount,
+      status: 'Completed',
+      paymentMethod: 'NOROZZ Wallet',
+    }).catch((err) => console.warn('Wallet transaction log warning:', err));
+
+    // 2. Create LedgerEntry log (Debit)
+    const { LedgerEntry } = await import('../models/ledgerEntry.model.js');
+    await LedgerEntry.create({
+      transactionId,
+      userId: user._id,
+      orderId: booking._id,
+      accountType: 'CUSTOMER_WALLET',
+      type: 'CUSTOMER_WALLET_DEBIT',
+      direction: 'DEBIT',
+      amount: requiredAmount,
+      currency: 'INR',
+      balanceBefore: previousBal,
+      balanceAfter: newBal,
+      referenceType: 'Booking',
+      referenceId: String(booking._id),
+      status: 'Success',
+      idempotencyKey: `wallet_pay_${booking._id}_${Date.now()}`,
+      metadata: { paymentMethod: 'Wallet' },
+    }).catch((err) => console.warn('Ledger logging warning:', err));
+
+    // 3. Create Payment record
     const payment = await paymentRepository.create({
       transactionId,
       user: user._id,
       booking: booking._id,
       type: 'booking_payment',
-      amount,
+      amount: requiredAmount,
       currency: 'INR',
       paymentMethod: 'Wallet',
       status: 'Success',
@@ -121,7 +179,11 @@ export class PaymentService {
     booking.paymentMethod = 'Wallet';
     await booking.save();
 
-    return { message: 'Booking paid successfully via NOROZZ Wallet', payment };
+    return {
+      message: `🎉 ₹${requiredAmount} paid successfully via NOROZZ Wallet!`,
+      walletBalance: newBal,
+      payment,
+    };
   }
 
   // 4. PROCESS REFUND

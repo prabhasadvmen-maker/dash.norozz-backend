@@ -135,21 +135,26 @@ export class CustomerAuthService {
       if (user.email && user.email.startsWith('user_') && user.email.endsWith('@norozz.com')) user.email = '';
       if (user.city === 'Delhi NCR' && !user.isProfileCompleted) user.city = '';
 
-      const isPlaceholderName = !user.name;
-      const isPlaceholderEmail = !user.email;
-      const isMissingPhone = !user.phone;
-      const isMissingDob = !user.dob;
-      const isMissingGender = !user.gender;
+      const hasName = Boolean(user.name && user.name.trim() && !user.name.startsWith('Customer ') && !user.name.startsWith('user_'));
+      const hasContact = Boolean((user.email && !user.email.endsWith('@norozz.com')) || user.phone);
 
-      if (!user.isProfileCompleted || isPlaceholderName || isPlaceholderEmail || isMissingPhone || isMissingDob || isMissingGender) {
+      const isProfileComplete = Boolean(user.isProfileCompleted || (hasName && hasContact));
+
+      if (!isProfileComplete) {
         isNewUser = true;
+      } else {
+        isNewUser = false;
+        if (!user.isProfileCompleted) {
+          user.isProfileCompleted = true;
+          await user.save();
+        }
       }
     }
 
     await otpRepository.markAsVerified(validOtp._id);
 
     const authResult = await this.generateTokens(user);
-    return { ...authResult, isNewUser };
+    return { ...authResult, isNewUser, isProfileCompleted: !isNewUser };
   }
 
   // 3b. SECONDARY OTP (VERIFY SECOND IDENTIFIER - PHONE FOR EMAIL USERS / EMAIL FOR PHONE USERS)
@@ -291,6 +296,10 @@ export class CustomerAuthService {
       if (updateData[field] !== undefined) {
         sanitizedData[field] = updateData[field];
       }
+    }
+
+    if (sanitizedData.name && sanitizedData.name.trim()) {
+      sanitizedData.isProfileCompleted = true;
     }
 
     // Upload profile image to Cloudflare R2 if base64 data string is provided

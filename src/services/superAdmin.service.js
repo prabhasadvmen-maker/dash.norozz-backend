@@ -62,9 +62,23 @@ export class SuperAdminService {
     const totalCustomers = await userRepository.count({ role: ROLES.CUSTOMER });
     const totalPartners = await userRepository.count({ role: ROLES.PARTNER });
     const totalCityAdmins = await userRepository.count({ role: { $in: [ROLES.CITY_ADMIN, ROLES.ADMIN] } });
+    const totalCities = await City.countDocuments();
     const totalBookings = await bookingRepository.count();
     const grossRevenue = await bookingRepository.getGrossRevenue();
-    const platformCommission = Math.round(grossRevenue * 0.2); // 20% platform cut
+
+    // Live Booking Status Breakdown
+    const completedBookingsCount = await bookingRepository.count({ status: { $in: ['completed', 'Completed', 'confirmed', 'Confirmed'] } });
+    const pendingBookingsCount = await bookingRepository.count({ status: { $in: ['pending', 'Pending', 'accepted', 'Accepted', 'In Progress', 'in_progress'] } });
+    const cancelledBookingsCount = await bookingRepository.count({ status: { $in: ['cancelled', 'Cancelled', 'refunded', 'Refunded'] } });
+
+    // Financial Ledger Metrics Calculation
+    const grossBookingValue = Number(grossRevenue || 0);
+    const customerPlatformFees = Math.round(grossBookingValue * 0.05); // 5% Customer Platform Fee
+    const partnerCommissions = Math.round(grossBookingValue * 0.20);   // 20% Partner Commission
+    const grossPlatformRevenue = customerPlatformFees + partnerCommissions;
+    const refundsAdjustments = Math.round(grossBookingValue * 0.01);
+    const gatewayCharges = Math.round(grossBookingValue * 0.02);
+    const netPlatformRevenue = Math.max(0, grossPlatformRevenue - refundsAdjustments - gatewayCharges);
 
     const recentBookings = await bookingRepository.findRecent(5);
     const recentPartners = await userRepository.find({ role: ROLES.PARTNER }, '-password', { createdAt: -1 });
@@ -75,12 +89,25 @@ export class SuperAdminService {
 
     return {
       overview: {
-        grossRevenue,
-        platformCommission,
-        totalCustomers: totalCustomers || 48200,
-        totalPartners: totalPartners || 1450,
-        totalCityAdmins: totalCityAdmins || 12,
-        totalBookings: totalBookings || 184200,
+        grossRevenue: grossBookingValue,
+        platformCommission: partnerCommissions,
+        totalCustomers: totalCustomers || 0,
+        totalPartners: totalPartners || 0,
+        totalCityAdmins: totalCityAdmins || 0,
+        totalCities: totalCities || 0,
+        totalBookings: totalBookings || 0,
+        completedBookings: completedBookingsCount || 0,
+        pendingBookings: pendingBookingsCount || 0,
+        cancelledBookings: cancelledBookingsCount || 0,
+      },
+      financialLedger: {
+        grossBookingValue,
+        customerPlatformFees,
+        partnerCommissions,
+        grossPlatformRevenue,
+        refundsAdjustments,
+        gatewayCharges,
+        netPlatformRevenue,
       },
       recentBookings,
       recentPartners: populatedPartners.slice(0, 5),
@@ -199,7 +226,14 @@ export class SuperAdminService {
   }
 
   async getAllBookings() {
-    return await bookingRepository.find({}, '', { createdAt: -1 });
+    const { Booking } = await import('../models/booking.model.js');
+    return await Booking.find({})
+      .populate('customer', 'name email phone')
+      .populate('partner', 'name agencyName phone')
+      .populate('service', 'name category')
+      .populate('category', 'name')
+      .sort({ createdAt: -1 })
+      .lean();
   }
 
   // 5. COUPON MANAGEMENT SYSTEM (CRUD)
@@ -313,6 +347,41 @@ export class SuperAdminService {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Coupon not found');
     }
     return { message: 'Coupon deleted successfully!' };
+  }
+
+  // 6. REFERRAL SETTINGS MANAGEMENT
+  async getReferralSettings() {
+    const { SystemSettings } = await import('../models/systemSettings.model.js');
+    let settings = await SystemSettings.findOne({ key: 'global_settings' });
+    if (!settings) {
+      settings = await SystemSettings.create({
+        key: 'global_settings',
+        referralBonusAmount: 500,
+        currency: 'INR',
+      });
+    }
+    return settings;
+  }
+
+  async updateReferralSettings(data) {
+    const { SystemSettings } = await import('../models/systemSettings.model.js');
+    let settings = await SystemSettings.findOne({ key: 'global_settings' });
+    if (!settings) {
+      settings = await SystemSettings.create({ key: 'global_settings', referralBonusAmount: 500 });
+    }
+
+    if (data.referralBonusAmount !== undefined) {
+      settings.referralBonusAmount = Number(data.referralBonusAmount);
+    }
+    if (data.currency !== undefined) {
+      settings.currency = data.currency;
+    }
+
+    await settings.save();
+    return {
+      message: 'Referral Bonus Settings updated successfully!',
+      settings,
+    };
   }
 }
 

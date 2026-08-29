@@ -61,9 +61,9 @@ export class PartnerDashboardService {
         todaysJobs: todaysJobs,
         pendingJobs: pendingJobs,
         completedJobs: completedJobs,
-        walletBalance: partnerUser?.walletBalance || partnerUser?.availableBalance || 0,
-        monthlyEarnings: partnerUser?.lifetimeEarnings || 0,
-        rating: partnerUser?.averageRating ? partnerUser.averageRating.toFixed(1) : '5.0',
+        walletBalance: partner?.walletBalance || partner?.availableBalance || 0,
+        monthlyEarnings: partner?.lifetimeEarnings || 0,
+        rating: partner?.averageRating ? partner.averageRating.toFixed(1) : '5.0',
         activeWorkers: 1,
       },
       recentBookings: partnerBookings.slice(0, 10),
@@ -181,51 +181,42 @@ export class PartnerDashboardService {
   // 3. WALLET & EARNINGS
   async getWallet(partner) {
     const p = await userRepository.findById(partner._id);
-    let transactions = await WalletTransaction.find({ partnerId: partner._id }).sort({ createdAt: -1 });
 
-    if (transactions.length === 0) {
-      // Seed default transactions matching Figma specs with partner-unique transaction IDs
-      const pPrefix = partner._id.toString().slice(-4).toUpperCase();
-      const defaults = [
-        { transactionId: `TXN-${pPrefix}-9081`, partnerId: partner._id, type: 'Credit', category: 'Job Earnings', title: 'AC Foam & Jet Cleaning Commission', amount: 1499, status: 'Completed' },
-        { transactionId: `TXN-${pPrefix}-9080`, partnerId: partner._id, type: 'Credit', category: 'Referral Bonus', title: 'Referral Bonus (Amitabh Verma)', amount: 500, status: 'Completed' },
-        { transactionId: `TXN-${pPrefix}-9079`, partnerId: partner._id, type: 'Debit', category: 'Bank Withdrawal', title: 'Direct Bank Withdrawal to HDFC', amount: 5000, status: 'Completed' },
-        { transactionId: `TXN-${pPrefix}-9078`, partnerId: partner._id, type: 'Credit', category: 'Job Earnings', title: 'Full Home Deep Cleaning Job Payout', amount: 4999, status: 'Completed' },
-      ];
-      try {
-        transactions = await WalletTransaction.insertMany(defaults);
-      } catch (insertErr) {
-        if (insertErr.code === 11000) {
-          transactions = await WalletTransaction.find({ partnerId: partner._id }).sort({ createdAt: -1 });
-        } else {
-          throw insertErr;
-        }
-      }
-    }
+    // Auto-delete legacy seeded dummy transactions from MongoDB for this partner
+    await WalletTransaction.deleteMany({
+      partnerId: partner._id,
+      transactionId: { $regex: /^TXN-.*-(9081|9080|9079|9078)/ }
+    });
 
-    const totalCredits = transactions
-      .filter((t) => t.type === 'Credit')
-      .reduce((sum, t) => sum + (t.amount || 0), 0);
+    const transactions = await WalletTransaction.find({ partnerId: partner._id }).sort({ createdAt: -1 });
 
-    // Auto-cleanup legacy 12450 default balance for old accounts without transactions
-    if (p && (p.walletBalance === 12450 || p.availableBalance === 12450) && transactions.length === 0) {
-      p.walletBalance = 0;
-      p.availableBalance = 0;
-      p.withdrawableBalance = 0;
-      p.lifetimeEarnings = 0;
+    const completedBookings = await bookingRepository.model.find({
+      partner: partner._id,
+      status: { $in: ['Completed', 'completed'] },
+    });
+
+    const realLifetimeEarned = completedBookings.reduce(
+      (sum, b) => sum + (b.totalAmount || b.amount || b.finalPrice || 0),
+      0
+    );
+
+    // Auto-clean legacy unverified 13209 or 12450 default balance on User document to real lifetime earnings
+    if (p && (p.walletBalance === 13209 || p.walletBalance === 12450 || p.availableBalance === 12450 || p.availableBalance === 13209)) {
+      p.walletBalance = realLifetimeEarned;
+      p.availableBalance = realLifetimeEarned;
+      p.withdrawableBalance = realLifetimeEarned;
+      p.lifetimeEarnings = realLifetimeEarned;
       await p.save();
     }
 
-    const currentBal = (p?.walletBalance === 12450 || p?.availableBalance === 12450) && transactions.length === 0
-      ? 0
-      : (p?.walletBalance ?? 0);
+    const currentBal = (p?.walletBalance === 13209 || p?.walletBalance === 12450) ? realLifetimeEarned : (p?.walletBalance ?? realLifetimeEarned);
 
     return {
       partnerId: partner._id,
       walletBalance: currentBal,
       securityDeposit: p?.securityDeposit ?? 0,
       pendingClearance: p?.pendingBalance ?? 0,
-      totalEarned: p?.lifetimeEarnings ?? totalCredits,
+      totalEarned: p?.lifetimeEarnings || realLifetimeEarned,
       bankDetails: p?.bankDetails || {},
       transactions,
     };
@@ -233,7 +224,6 @@ export class PartnerDashboardService {
 
   async getEarnings(partner) {
     const p = await userRepository.findById(partner._id);
-    const balance = p?.walletBalance ?? p?.availableBalance ?? 0;
 
     // Query real completed bookings from MongoDB
     const completedBookings = await bookingRepository.model
@@ -246,7 +236,7 @@ export class PartnerDashboardService {
 
     const realTotalJobs = completedBookings.length;
     const realTotalEarned = completedBookings.reduce(
-      (sum, b) => sum + (b.totalAmount || b.finalPrice || 850),
+      (sum, b) => sum + (b.totalAmount || b.amount || b.finalPrice || 0),
       0
     );
 
@@ -257,87 +247,80 @@ export class PartnerDashboardService {
     );
 
     const totalEarnedToday = todaysCompleted.reduce(
-      (sum, b) => sum + (b.totalAmount || b.finalPrice || 850),
+      (sum, b) => sum + (b.totalAmount || b.amount || b.finalPrice || 0),
       0
     );
 
     const todayFormattedJobs = todaysCompleted.map((b) => ({
       id: b.bookingNumber || `JOB-${b._id.toString().slice(-4)}`,
-      serviceName: b.serviceName || b.packageName || 'AC Repair & Service',
+      serviceName: b.serviceName || b.packageName || 'Service Job',
       customerName: b.customer?.name || 'Customer',
       time: new Date(b.updatedAt || b.createdAt).toLocaleTimeString([], {
         hour: '2-digit',
         minute: '2-digit',
       }),
-      amount: b.totalAmount || b.finalPrice || 850,
+      amount: b.totalAmount || b.amount || b.finalPrice || 0,
     }));
 
     return {
       partnerId: partner._id,
       overview: {
-        totalEarned: realTotalEarned > 0 ? realTotalEarned : balance + 72750,
-        totalJobs: realTotalJobs > 0 ? realTotalJobs : 42,
-        avgPerJob: realTotalJobs > 0 ? Math.round(realTotalEarned / realTotalJobs) : 1035,
+        totalEarned: realTotalEarned,
+        totalJobs: realTotalJobs,
+        avgPerJob: realTotalJobs > 0 ? Math.round(realTotalEarned / realTotalJobs) : 0,
         monthlyTrend: [
-          { month: 'Jan', val: 32000, height: '40%' },
-          { month: 'Feb', val: 41000, height: '52%' },
-          { month: 'Mar', val: 48000, height: '62%' },
-          { month: 'Apr', val: 56000, height: '72%' },
-          { month: 'May', val: 62000, height: '78%' },
-          { month: 'Jun', val: 74000, height: '88%' },
-          { month: 'Jul', val: realTotalEarned > 0 ? realTotalEarned : balance + 72750, height: '100%' },
+          { month: 'Jan', val: 0, height: '0%' },
+          { month: 'Feb', val: 0, height: '0%' },
+          { month: 'Mar', val: 0, height: '0%' },
+          { month: 'Apr', val: 0, height: '0%' },
+          { month: 'May', val: 0, height: '0%' },
+          { month: 'Jun', val: 0, height: '0%' },
+          { month: 'Jul', val: realTotalEarned, height: realTotalEarned > 0 ? '100%' : '0%' },
         ],
       },
       daily: {
-        dateLabel: 'Today, Jul 29 2026',
-        totalEarnedToday: totalEarnedToday > 0 ? totalEarnedToday : 2450,
-        percentageChange: '+12%',
+        dateLabel: 'Today',
+        totalEarnedToday,
+        percentageChange: '0%',
         hourlyActivity: [
-          { hour: '9 AM', val: 400 },
-          { hour: '11 AM', val: 850 },
-          { hour: '1 PM', val: 600 },
+          { hour: '9 AM', val: 0 },
+          { hour: '11 AM', val: 0 },
+          { hour: '1 PM', val: 0 },
           { hour: '3 PM', val: 0 },
-          { hour: '5 PM', val: 1200 },
-          { hour: '7 PM', val: 400 },
+          { hour: '5 PM', val: 0 },
+          { hour: '7 PM', val: 0 },
         ],
-        completedJobs:
-          todayFormattedJobs.length > 0
-            ? todayFormattedJobs
-            : [
-                { id: 'JOB-901', serviceName: 'AC Repair & Gas Fill', customerName: 'Priya Mehta', time: '10:30 AM', amount: 850 },
-                { id: 'JOB-902', serviceName: 'Kitchen Water Plumbing', customerName: 'Rohan Sharma', time: '01:15 PM', amount: 1200 },
-                { id: 'JOB-903', serviceName: 'Electrical Wiring Check', customerName: 'Amit Kumar', time: '04:45 PM', amount: 400 },
-              ],
+        completedJobs: todayFormattedJobs,
       },
       weekly: {
-        weekLabel: 'Jul 28 - Aug 3',
-        totalEarnedWeek: 16800,
-        percentageChange: '+18%',
+        weekLabel: 'Current Week',
+        totalEarnedWeek: realTotalEarned,
+        percentageChange: '0%',
         dailyBreakdown: [
-          { day: 'Mon', val: 2100 },
-          { day: 'Tue', val: 2400 },
-          { day: 'Wed', val: 4200 },
-          { day: 'Thu', val: 1900 },
-          { day: 'Fri', val: 2800 },
-          { day: 'Sat', val: 3400 },
+          { day: 'Mon', val: 0 },
+          { day: 'Tue', val: 0 },
+          { day: 'Wed', val: 0 },
+          { day: 'Thu', val: 0 },
+          { day: 'Fri', val: 0 },
+          { day: 'Sat', val: 0 },
           { day: 'Sun', val: 0 },
         ],
-        busiestDay: 'Wednesday',
-        busiestDayDetails: 'You earned ₹4,200 across 4 jobs on Wednesday',
+        busiestDay: realTotalJobs > 0 ? 'Active' : 'None',
+        busiestDayDetails: realTotalJobs > 0 ? `You completed ${realTotalJobs} service jobs` : 'No completed jobs this week yet',
       },
       monthly: {
-        monthLabel: 'July 2026',
-        totalEarnedMonth: 46800,
-        percentageChange: '+15%',
+        monthLabel: 'Current Month',
+        totalEarnedMonth: realTotalEarned,
+        percentageChange: '0%',
         weeklyBreakdown: [
-          { week: 'W1', val: 10200 },
-          { week: 'W2', val: 11500 },
-          { week: 'W3', val: 12700 },
-          { week: 'W4', val: 12400 },
+          { week: 'W1', val: 0 },
+          { week: 'W2', val: 0 },
+          { week: 'W3', val: 0 },
+          { week: 'W4', val: realTotalEarned },
         ],
-        avgWeeklyEarned: 11700,
-        activeDays: 24,
-        payoutDestination: `${p?.bankDetails?.bankName || 'HDFC Bank'} •••• ${p?.bankDetails?.accountNumber ? p.bankDetails.accountNumber.slice(-4) : '4920'}`,
+        avgWeeklyEarned: Math.round(realTotalEarned / 4),
+        activeDays: realTotalJobs,
+        payoutDestination: `${p?.bankDetails?.bankName || 'Bank Account'} ${p?.bankDetails?.accountNumber ? `•••• ${p.bankDetails.accountNumber.slice(-4)}` : ''}`,
       },
     };
   }
@@ -540,6 +523,43 @@ export class PartnerDashboardService {
     });
 
     return [userMsg, agentMsg];
+  }
+
+  // 11. REFERRAL PROGRAM
+  async getReferralData(partner) {
+    const { SystemSettings } = await import('../models/systemSettings.model.js');
+    const { User } = await import('../models/user.model.js');
+    let settings = await SystemSettings.findOne({ key: 'global_settings' });
+    const bonusAmount = settings?.referralBonusAmount ?? 500;
+
+    const refCode = partner.referralCode || `NRZ-REF-${partner._id.toString().slice(-6).toUpperCase()}`;
+
+    // Query partners registered using this partner's referral code
+    const joinedPartners = await User.find({
+      role: ROLES.PARTNER,
+      $or: [{ referredBy: refCode }, { referralCodeUsed: refCode }],
+    }).select('name email phone status kycStatus createdAt').lean();
+
+    const joinedCount = joinedPartners.length;
+
+    // Calculate Referral Bonus Earned from Wallet Transactions
+    const referralTxns = await WalletTransaction.find({
+      partnerId: partner._id,
+      category: 'Referral Bonus',
+    }).lean();
+
+    const totalBonusEarned = referralTxns.reduce((sum, t) => sum + (t.amount || 0), 0);
+    const pendingEarned = Math.max(0, (joinedCount * bonusAmount) - totalBonusEarned);
+
+    return {
+      referralCode: refCode,
+      referralBonusAmount: bonusAmount,
+      totalInvitesSent: joinedCount,
+      joinedTechnicians: joinedCount,
+      totalReferralBonusEarned: totalBonusEarned,
+      pendingEarnings: pendingEarned,
+      joinedList: joinedPartners,
+    };
   }
 }
 

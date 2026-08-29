@@ -183,39 +183,127 @@ export class CustomerDashboardService {
   async getWallet(customer) {
     const user = await userRepository.findById(customer._id);
     const { WalletTransaction } = await import('../models/walletTransaction.model.js');
-    const { LedgerEntry } = await import('../models/ledgerEntry.model.js');
 
-    let transactions = await WalletTransaction.find({ user: customer._id }).sort({ createdAt: -1 });
-
-    if (transactions.length === 0) {
-      const ledgers = await LedgerEntry.find({ userId: customer._id }).sort({ createdAt: -1 });
-      transactions = ledgers.map((l, idx) => ({
-        id: l._id || `WAL-${idx + 1}`,
-        amount: l.amount || 0,
-        type: l.type === 'CREDIT' ? 'Credit' : 'Debit',
-        desc: l.description || l.title || 'Wallet Activity',
-        title: l.description || l.title || 'Wallet Activity',
-        date: new Date(l.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
-      }));
-
-      // Auto-cleanup legacy 12450 default balance for old accounts without transactions
-      if (ledgers.length === 0 && (user?.walletBalance === 12450 || user?.availableBalance === 12450)) {
-        user.walletBalance = 0;
-        user.availableBalance = 0;
-        user.withdrawableBalance = 0;
-        await user.save();
-      }
+    // Auto-cleanup legacy 12450 default balance for old accounts without transactions
+    if (user && (user.walletBalance === 12450 || user.availableBalance === 12450)) {
+      user.walletBalance = 0;
+      user.availableBalance = 0;
+      user.withdrawableBalance = 0;
+      await user.save();
     }
 
-    const currentBal = (user?.walletBalance === 12450 || user?.availableBalance === 12450) && transactions.length === 0
-      ? 0
-      : (user?.walletBalance ?? 0);
+    // Fetch ONLY real customer wallet transactions
+    const rawTxns = await WalletTransaction.find({ user: customer._id }).sort({ createdAt: -1 });
+
+    const currentBal = user?.walletBalance ?? 0;
+
+    const formattedTransactions = rawTxns.map((tx) => {
+      const txObj = tx.toObject ? tx.toObject() : tx;
+      const txDate = txObj.createdAt ? new Date(txObj.createdAt) : new Date();
+      
+      const now = new Date();
+      const isToday = txDate.toDateString() === now.toDateString();
+      const yesterday = new Date(now);
+      yesterday.setDate(now.getDate() - 1);
+      const isYesterday = txDate.toDateString() === yesterday.toDateString();
+
+      let dateGroup = txDate.toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase();
+      if (isToday) dateGroup = 'TODAY';
+      else if (isYesterday) dateGroup = 'YESTERDAY';
+
+      const timeStr = txDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+      return {
+        id: txObj._id || txObj.transactionId,
+        transactionId: txObj.transactionId || `TXN-${txObj._id}`,
+        title: txObj.title || (txObj.type === 'Credit' ? 'Added to Wallet' : 'Service Booking'),
+        category: txObj.category || 'Wallet Activity',
+        type: txObj.type || 'Credit',
+        amount: Number(txObj.amount || 0),
+        status: txObj.status || 'Completed',
+        paymentMethod: txObj.paymentMethod || 'UPI / Online',
+        time: timeStr,
+        dateGroup,
+        formattedDate: `${dateGroup === 'TODAY' ? 'Today' : dateGroup === 'YESTERDAY' ? 'Yesterday' : dateGroup}, ${timeStr}`,
+        createdAt: txObj.createdAt || new Date(),
+      };
+    });
 
     return {
       customerId: customer._id,
       balance: currentBal,
       currency: 'INR',
-      transactions,
+      transactions: formattedTransactions,
+    };
+  }
+
+  async addWalletMoney(customer, data) {
+    const { amount, paymentMethod } = data;
+    const rechargeAmount = Number(amount);
+
+    if (!rechargeAmount || isNaN(rechargeAmount) || rechargeAmount <= 0) {
+      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Please enter a valid positive amount to add.');
+    }
+
+    if (rechargeAmount < 10) {
+      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Minimum amount to add is ₹10.');
+    }
+
+    if (rechargeAmount > 50000) {
+      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Maximum limit per transaction is ₹50,000.');
+    }
+
+    const user = await userRepository.findById(customer._id);
+    if (!user) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Customer user account not found.');
+    }
+
+    const previousBal = user.walletBalance || 0;
+    const newBal = previousBal + rechargeAmount;
+
+    user.walletBalance = newBal;
+    user.availableBalance = (user.availableBalance || 0) + rechargeAmount;
+    await user.save();
+
+    const txnId = `TXN-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const chosenMethod = paymentMethod || 'UPI / Google Pay / PhonePe';
+
+    // 1. Create WalletTransaction log
+    const { WalletTransaction } = await import('../models/walletTransaction.model.js');
+    const transaction = await WalletTransaction.create({
+      transactionId: txnId,
+      user: customer._id,
+      type: 'Credit',
+      category: 'Added to Wallet',
+      title: `Added from ${chosenMethod.split('/')[0].trim()}`,
+      amount: rechargeAmount,
+      status: 'Completed',
+      paymentMethod: chosenMethod,
+    });
+
+    // 2. Create LedgerEntry log
+    const { LedgerEntry } = await import('../models/ledgerEntry.model.js');
+    await LedgerEntry.create({
+      transactionId: txnId,
+      userId: customer._id,
+      accountType: 'CUSTOMER_WALLET',
+      type: 'CUSTOMER_WALLET_CREDIT',
+      direction: 'CREDIT',
+      amount: rechargeAmount,
+      currency: 'INR',
+      balanceBefore: previousBal,
+      balanceAfter: newBal,
+      referenceType: 'DirectRecharge',
+      referenceId: txnId,
+      status: 'Success',
+      idempotencyKey: `topup_${customer._id}_${Date.now()}`,
+      metadata: { paymentMethod: chosenMethod },
+    }).catch((err) => console.warn('Ledger logging warning:', err));
+
+    return {
+      message: `🎉 ₹${rechargeAmount} added to your NOROZZ Wallet successfully!`,
+      walletBalance: newBal,
+      transaction,
     };
   }
 

@@ -139,6 +139,11 @@ export class PartnerDashboardController extends BaseController {
     const messages = await partnerDashboardService.sendChatMessage(req.user._id, req.body);
     return this.sendSuccess(res, messages, 'Chat message sent successfully');
   });
+
+  getReferralData = asyncHandler(async (req, res) => {
+    const data = await partnerDashboardService.getReferralData(req.user);
+    return this.sendSuccess(res, data, 'Partner referral data retrieved successfully');
+  });
 }
 
 export const partnerDashboardController = new PartnerDashboardController();

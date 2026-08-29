@@ -11,7 +11,14 @@ const walletTransactionSchema = new mongoose.Schema(
     partnerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true,
+      required: false,
+      default: null,
+    },
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: false,
+      default: null,
     },
     type: {
       type: String,
@@ -20,8 +27,8 @@ const walletTransactionSchema = new mongoose.Schema(
     },
     category: {
       type: String,
-      enum: ['Job Earnings', 'Referral Bonus', 'Bank Withdrawal', 'Security Deposit', 'Surge Bonus'],
-      default: 'Job Earnings',
+      enum: ['Added to Wallet', 'Service Booking', 'Refund', 'Job Earnings', 'Referral Bonus', 'Bank Withdrawal', 'Security Deposit', 'Surge Bonus'],
+      default: 'Added to Wallet',
     },
     title: {
       type: String,

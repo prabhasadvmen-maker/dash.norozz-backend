@@ -57,5 +57,6 @@ router.post('/complaints', partnerDashboardController.submitComplaint);
 router.get('/complaints', partnerDashboardController.getComplaints);
 router.get('/chat', partnerDashboardController.getChatMessages);
 router.post('/chat', partnerDashboardController.sendChatMessage);
+router.get('/referral', partnerDashboardController.getReferralData);
 
 export default router;

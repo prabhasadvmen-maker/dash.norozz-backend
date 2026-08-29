@@ -39,6 +39,11 @@ export class CustomerDashboardController extends BaseController {
     return this.sendSuccess(res, wallet, 'NOROZZ Wallet details retrieved successfully');
   });
 
+  addWalletMoney = asyncHandler(async (req, res) => {
+    const result = await customerDashboardService.addWalletMoney(req.user, req.body);
+    return this.sendSuccess(res, result, result.message);
+  });
+
   getNotifications = asyncHandler(async (req, res) => {
     const notifs = await customerDashboardService.getNotifications();
     return this.sendSuccess(res, notifs, 'Customer notifications retrieved successfully');

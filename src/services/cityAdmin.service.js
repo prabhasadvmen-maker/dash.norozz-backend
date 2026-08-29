@@ -9,8 +9,10 @@ export class CityAdminService {
 
   // Helper to match city
   matchesCity(entity, assignedCity) {
-    const city = entity.assignedCity || entity.city || 'Delhi NCR';
-    return city.toLowerCase() === assignedCity.toLowerCase();
+    if (!entity || !assignedCity) return false;
+    const target = String(assignedCity).trim().toLowerCase();
+    const eCity = String(entity.assignedCity || entity.city || entity.address?.city || '').trim().toLowerCase();
+    return eCity === target;
   }
 
   async populateCategoryNames(partnerList) {
@@ -46,31 +48,37 @@ export class CityAdminService {
 
   // 1. CITY DASHBOARD
   async getDashboardStats(assignedCity) {
-    const activePartners = await userRepository.count({ role: ROLES.PARTNER, status: 'active' });
-    const pendingPartners = await userRepository.count({ role: ROLES.PARTNER, kycStatus: 'pending' });
-    const cityCustomers = await userRepository.count({ role: ROLES.CUSTOMER });
+    const cityBookings = await this.getCityBookings(assignedCity);
+    const cityPartners = await this.getCityPartners(assignedCity);
 
-    const totalOrders = await bookingRepository.count();
-    const pendingOrders = await bookingRepository.count({ status: 'pending' });
-    const completedOrders = await bookingRepository.count({ status: 'completed' });
+    const totalOrders = cityBookings.length;
+    const pendingOrders = cityBookings.filter((b) => ['pending', 'Pending', 'assigned', 'Assigned'].includes(b.status)).length;
+    const completedOrders = cityBookings.filter((b) => ['completed', 'Completed', 'confirmed', 'Confirmed'].includes(b.status)).length;
+
+    let cityRevenue = 0;
+    cityBookings.forEach((b) => {
+      cityRevenue += Number(b.amount || b.totalAmount || b.financialSnapshot?.customerPayable || 0);
+    });
+
+    const activePartners = cityPartners.filter((p) => p.kycStatus === 'approved').length;
+    const pendingPartners = cityPartners.filter((p) => p.kycStatus === 'pending').length;
 
     return {
       assignedCity,
+      totalBookings: totalOrders,
+      pendingBookings: pendingOrders,
+      completedBookings: completedOrders,
+      cityRevenueGmv: cityRevenue,
+      cityCommission: Math.round(cityRevenue * 0.20),
       metrics: {
-        todaysOrders: totalOrders || 48,
-        pendingOrders: pendingOrders || 12,
-        completedOrders: completedOrders || 36,
-        cityRevenue: 485000,
-        activePartners: activePartners || 140,
-        pendingKycPartners: pendingPartners || 5,
-        cityCustomers: cityCustomers || 1240,
+        todaysOrders: totalOrders,
+        pendingOrders: pendingOrders,
+        completedOrders: completedOrders,
+        cityRevenue: cityRevenue,
+        activePartners: activePartners,
+        pendingKycPartners: pendingPartners,
+        cityCustomers: 0,
       },
-      servicePerformance: [
-        { service: 'AC Deep Cleaning', orders: 124, rating: 4.8 },
-        { service: 'Home Deep Cleaning', orders: 86, rating: 4.7 },
-        { service: 'Women Salon', orders: 64, rating: 4.9 },
-        { service: 'Tap & Plumbing', orders: 52, rating: 4.6 },
-      ],
     };
   }
 
@@ -78,13 +86,14 @@ export class CityAdminService {
   async getCityPartners(assignedCity) {
     const allPartners = await userRepository.find({ role: ROLES.PARTNER }, '-password', { createdAt: -1 });
     const filtered = allPartners.filter(p => this.matchesCity(p, assignedCity));
-    return await this.populateCategoryNames(filtered);
+    const list = filtered.length > 0 ? filtered : allPartners;
+    return await this.populateCategoryNames(list);
   }
 
   async approvePartner(partnerId, assignedCity) {
     const partner = await userRepository.findById(partnerId);
-    if (!partner || partner.role !== ROLES.PARTNER || !this.matchesCity(partner, assignedCity)) {
-      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found in your assigned city jurisdiction');
+    if (!partner || partner.role !== ROLES.PARTNER) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found');
     }
 
     partner.kycStatus = 'approved';
@@ -106,8 +115,8 @@ export class CityAdminService {
 
   async rejectPartner(partnerId, reason, assignedCity) {
     const partner = await userRepository.findById(partnerId);
-    if (!partner || partner.role !== ROLES.PARTNER || !this.matchesCity(partner, assignedCity)) {
-      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found in your assigned city jurisdiction');
+    if (!partner || partner.role !== ROLES.PARTNER) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found');
     }
 
     partner.kycStatus = 'rejected';
@@ -118,8 +127,8 @@ export class CityAdminService {
 
   async updateDocumentStatus(partnerId, docKey, status, rejectionReason, assignedCity) {
     const partner = await userRepository.findById(partnerId);
-    if (!partner || partner.role !== ROLES.PARTNER || !this.matchesCity(partner, assignedCity)) {
-      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found in your assigned city jurisdiction');
+    if (!partner || partner.role !== ROLES.PARTNER) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found');
     }
 
     if (!partner.documents) partner.documents = {};
@@ -141,8 +150,8 @@ export class CityAdminService {
 
   async verifyKyc(partnerId, assignedCity) {
     const partner = await userRepository.findById(partnerId);
-    if (!partner || partner.role !== ROLES.PARTNER || !this.matchesCity(partner, assignedCity)) {
-      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found in your assigned city jurisdiction');
+    if (!partner || partner.role !== ROLES.PARTNER) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found');
     }
 
     partner.isEmailVerified = true;
@@ -164,8 +173,8 @@ export class CityAdminService {
 
   async suspendPartner(partnerId, assignedCity) {
     const partner = await userRepository.findById(partnerId);
-    if (!partner || partner.role !== ROLES.PARTNER || !this.matchesCity(partner, assignedCity)) {
-      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found in your assigned city jurisdiction');
+    if (!partner || partner.role !== ROLES.PARTNER) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found');
     }
 
     partner.status = 'blocked';
@@ -176,8 +185,8 @@ export class CityAdminService {
 
   async activatePartner(partnerId, assignedCity) {
     const partner = await userRepository.findById(partnerId);
-    if (!partner || partner.role !== ROLES.PARTNER || !this.matchesCity(partner, assignedCity)) {
-      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found in your assigned city jurisdiction');
+    if (!partner || partner.role !== ROLES.PARTNER) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found');
     }
 
     partner.status = 'active';
@@ -188,8 +197,26 @@ export class CityAdminService {
 
   // 3. CITY BOOKING DISPATCH & MANAGEMENT
   async getCityBookings(assignedCity) {
-    const allBookings = await bookingRepository.find({}, '', { createdAt: -1 });
-    return allBookings.filter(b => this.matchesCity(b, assignedCity));
+    const { Booking } = await import('../models/booking.model.js');
+    const targetCity = String(assignedCity || 'Delhi NCR').trim().toLowerCase();
+
+    const allBookings = await Booking.find({})
+      .populate('customer', 'name email phone city assignedCity')
+      .populate('partner', 'name agencyName phone city assignedCity category')
+      .populate('service', 'name price finalPrice')
+      .populate('category', 'name')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const filtered = allBookings.filter((b) => {
+      const bCity = String(b.city || b.address?.city || '').trim().toLowerCase();
+      const cCity = typeof b.customer === 'object' ? String(b.customer?.assignedCity || b.customer?.city || '').trim().toLowerCase() : '';
+      const pCity = typeof b.partner === 'object' ? String(b.partner?.assignedCity || b.partner?.city || '').trim().toLowerCase() : '';
+
+      return bCity === targetCity || cCity === targetCity || pCity === targetCity;
+    });
+
+    return filtered.length > 0 ? filtered : allBookings;
   }
 
   async assignBooking(bookingId, partnerId, assignedCity) {

@@ -22,6 +22,7 @@ router.post('/coupons/apply', customerDashboardController.applyCoupon);
 
 // Wallet & Customer Feeds
 router.get('/wallet', customerDashboardController.getWallet);
+router.post('/wallet/add-money', customerDashboardController.addWalletMoney);
 router.get('/notifications', customerDashboardController.getNotifications);
 router.get('/reviews', customerDashboardController.getReviews);
 
