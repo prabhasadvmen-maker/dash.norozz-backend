@@ -142,15 +142,10 @@ const userSchema = new mongoose.Schema(
       default: '',
     },
     category: {
-      type: String,
-      default: '',
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Category',
+      default: null,
     },
-    categories: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Category',
-      },
-    ],
     kycStatus: {
       type: String,
       enum: ['pending', 'approved', 'rejected'],
@@ -182,6 +177,21 @@ const userSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    locationCoordinates: {
+      lat: { type: Number, default: null },
+      lng: { type: Number, default: null },
+    },
+    location: {
+      type: {
+        type: String,
+        enum: ['Point'],
+        default: 'Point',
+      },
+      coordinates: {
+        type: [Number],
+        default: [0, 0],
+      },
+    },
     workingHours: [
       {
         day: { type: String, required: true },
@@ -200,12 +210,12 @@ const userSchema = new mongoose.Schema(
       bankPassbookDoc: { type: String, default: '' },
       gstDoc: { type: String, default: '' },
       statuses: {
-        aadhaarFront: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'approved' },
-        aadhaarBack: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'approved' },
-        panDoc: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'approved' },
-        drivingLicenseDoc: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'approved' },
-        bankPassbookDoc: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'approved' },
-        passportPhoto: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'approved' },
+        aadhaarFront: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+        aadhaarBack: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+        panDoc: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+        drivingLicenseDoc: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+        bankPassbookDoc: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+        passportPhoto: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
       },
       rejectionReasons: {
         aadhaarFront: { type: String, default: '' },
@@ -304,6 +314,25 @@ userSchema.pre('validate', function (next) {
  * Pre-Save Middleware to automatically hash password using bcryptjs
  */
 userSchema.pre('save', async function (next) {
+  if (this.role === ROLES.PARTNER && this.documents) {
+    if (!this.documents.statuses) {
+      this.documents.statuses = {
+        aadhaarFront: 'pending',
+        aadhaarBack: 'pending',
+        panDoc: 'pending',
+        drivingLicenseDoc: 'pending',
+        bankPassbookDoc: 'pending',
+        passportPhoto: 'pending',
+      };
+    }
+    const docKeys = ['aadhaarFront', 'aadhaarBack', 'panDoc', 'drivingLicenseDoc', 'bankPassbookDoc', 'passportPhoto'];
+    for (const key of docKeys) {
+      if (!this.documents[key]) {
+        this.documents.statuses[key] = 'pending';
+      }
+    }
+  }
+
   if (!this.isModified('password')) return next();
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);

@@ -19,11 +19,10 @@ export const getPartnerOnboardingStatus = (user) => {
         isPhoneVerified: false,
         isProfileCompleted: false,
         isLocationSaved: false,
-        isDocumentsUploaded: false,
         isCategorySelected: false,
         isSkillsUpdated: false,
         isServiceAreaSet: false,
-        isWorkingHoursSet: false,
+        isDocumentsUploaded: false,
         isAllCompleted: false,
         kycStatus: 'pending',
       },
@@ -48,7 +47,26 @@ export const getPartnerOnboardingStatus = (user) => {
   const hasCityOrAddress = Boolean((user.assignedCity || user.city) && user.address);
   const isLocationSaved = Boolean(user.isLocationSaved || hasCoords || hasCityOrAddress);
 
-  // 4. Documents Upload Check (KYC docs: Aadhaar, PAN, Photo, DL, Bank Passbook)
+  // 4. Category Selection Check
+  const isCategorySelected = Boolean(
+    user.isCategorySelected ||
+    (user.categories && user.categories.length > 0) ||
+    (user.category && user.category.trim() !== '')
+  );
+
+  // 5. Skills & Experience Check
+  const isSkillsUpdated = Boolean(
+    user.isSkillsUpdated ||
+    (user.skills && user.skills.length > 0)
+  );
+
+  // 6. Service Area Check
+  const isServiceAreaSet = Boolean(
+    user.isServiceAreaSet ||
+    (user.localities && user.localities.length > 0)
+  );
+
+  // 7. Documents Upload Check (KYC docs: Aadhaar, PAN, Photo, DL, Bank Passbook) - LAST STEP
   const docs = user.documents || {};
   const hasAadhaar = Boolean((docs.aadhaarFront && docs.aadhaarBack) || docs.aadhaarDoc);
   const hasOtherKycDoc = Boolean(docs.panDoc || docs.passportPhoto || docs.drivingLicenseDoc || docs.bankPassbookDoc || user.profileImage);
@@ -58,48 +76,22 @@ export const getPartnerOnboardingStatus = (user) => {
     (hasAadhaar || hasOtherKycDoc)
   );
 
-  // 5. Category Selection Check
-  const isCategorySelected = Boolean(
-    user.isCategorySelected ||
-    (user.categories && user.categories.length > 0) ||
-    (user.category && user.category.trim() !== '')
-  );
-
-  // 6. Skills & Experience Check
-  const isSkillsUpdated = Boolean(
-    user.isSkillsUpdated ||
-    (user.skills && user.skills.length > 0)
-  );
-
-  // 7. Service Area Check
-  const isServiceAreaSet = Boolean(
-    user.isServiceAreaSet ||
-    (user.localities && user.localities.length > 0)
-  );
-
-  // 8. Working Hours Check
-  const isWorkingHoursSet = Boolean(
-    user.isWorkingHoursSet ||
-    (user.workingHours && user.workingHours.length > 0)
-  );
-
-  // Check if ALL 8 steps are TRUE
+  // Check if ALL steps are TRUE (Working Hours removed from required onboarding flow)
   const isAllCompleted = Boolean(
     isPhoneVerified &&
     isProfileCompleted &&
     isLocationSaved &&
-    isDocumentsUploaded &&
     isCategorySelected &&
     isSkillsUpdated &&
     isServiceAreaSet &&
-    isWorkingHoursSet
+    isDocumentsUploaded
   );
 
   const isKycSubmitted = Boolean(user.isKycSubmitted || isAllCompleted);
   const kycStatus = user.kycStatus || 'pending';
 
   // Compute next step strictly in requested order:
-  // VERIFY_OTP ➔ CREATE_PROFILE ➔ UPLOAD_LOCATION ➔ UPLOAD_DOCUMENTS ➔ SELECT_CATEGORY ➔ UPDATE_SKILLS_EXPERIENCE ➔ UPLOAD_SERVICE_AREA ➔ UPLOAD_WORKING_HOURS ➔ DONE
+  // VERIFY_OTP ➔ CREATE_PROFILE ➔ UPLOAD_LOCATION ➔ SELECT_CATEGORY ➔ UPDATE_SKILLS_EXPERIENCE ➔ UPLOAD_SERVICE_AREA ➔ UPLOAD_DOCUMENTS ➔ DONE
   let nextStep = 'REQUEST_OTP';
 
   if (!isPhoneVerified) {
@@ -108,16 +100,14 @@ export const getPartnerOnboardingStatus = (user) => {
     nextStep = 'CREATE_PROFILE';
   } else if (!isLocationSaved) {
     nextStep = 'UPLOAD_LOCATION';
-  } else if (!isDocumentsUploaded) {
-    nextStep = 'UPLOAD_DOCUMENTS';
   } else if (!isCategorySelected) {
     nextStep = 'SELECT_CATEGORY';
   } else if (!isSkillsUpdated) {
     nextStep = 'UPDATE_SKILLS_EXPERIENCE';
   } else if (!isServiceAreaSet) {
     nextStep = 'UPLOAD_SERVICE_AREA';
-  } else if (!isWorkingHoursSet) {
-    nextStep = 'UPLOAD_WORKING_HOURS';
+  } else if (!isDocumentsUploaded) {
+    nextStep = 'UPLOAD_DOCUMENTS';
   } else {
     nextStep = 'DONE';
   }
@@ -128,11 +118,10 @@ export const getPartnerOnboardingStatus = (user) => {
       isPhoneVerified,
       isProfileCompleted,
       isLocationSaved,
-      isDocumentsUploaded,
       isCategorySelected,
       isSkillsUpdated,
       isServiceAreaSet,
-      isWorkingHoursSet,
+      isDocumentsUploaded,
       isAllCompleted,
       isKycSubmitted,
       kycStatus,
@@ -232,6 +221,18 @@ export class PartnerAuthService {
         const cleanPhoneDigits = cleanPhone.replace(/\D/g, '');
         user.userId = `NRZ-P-${cleanPhoneDigits.slice(-6)}`;
       }
+    }
+
+    // Sanitize document statuses for unuploaded documents
+    if (user.documents) {
+      if (!user.documents.statuses) user.documents.statuses = {};
+      const docKeys = ['aadhaarFront', 'aadhaarBack', 'panDoc', 'drivingLicenseDoc', 'bankPassbookDoc', 'passportPhoto'];
+      for (const key of docKeys) {
+        if (!user.documents[key]) {
+          user.documents.statuses[key] = 'pending';
+        }
+      }
+      user.markModified('documents');
     }
 
     // Compute updated status flags based on user's actual data in DB without resetting existing completed flags
@@ -540,10 +541,16 @@ export class PartnerAuthService {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner account not found');
     }
 
-    if (latitude && longitude) {
+    if (latitude !== undefined && longitude !== undefined && latitude !== null && longitude !== null) {
+      const numLat = Number(latitude);
+      const numLng = Number(longitude);
       partner.locationCoordinates = {
-        lat: Number(latitude),
-        lng: Number(longitude),
+        lat: numLat,
+        lng: numLng,
+      };
+      partner.location = {
+        type: 'Point',
+        coordinates: [numLng, numLat],
       };
     }
     if (address) partner.address = address;
@@ -588,6 +595,7 @@ export class PartnerAuthService {
     const hasAadhaar = Boolean((updatedDocs.aadhaarFront && updatedDocs.aadhaarBack) || updatedDocs.aadhaarDoc);
     const hasOtherKycDoc = Boolean(updatedDocs.panDoc || updatedDocs.passportPhoto || updatedDocs.drivingLicenseDoc || updatedDocs.bankPassbookDoc || partner.profileImage);
     partner.isDocumentsUploaded = Boolean(hasAadhaar || hasOtherKycDoc || Object.keys(documentsData).length > 0);
+    partner.isKycSubmitted = true;
     if (!partner.kycStatus || partner.kycStatus === 'rejected') {
       partner.kycStatus = 'pending';
     }
@@ -607,20 +615,18 @@ export class PartnerAuthService {
     };
   }
 
-  // 6. STEP-WISE ONBOARDING METHOD 2: CATEGORY SELECTION (categories array of ObjectIds)
+  // 6. STEP-WISE ONBOARDING METHOD 2: CATEGORY SELECTION (single category ObjectId)
   async saveOnboardingCategory(partnerId, payload) {
     const partner = await userRepository.findById(partnerId);
     if (!partner || partner.role !== ROLES.PARTNER) {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner account not found');
     }
 
-    const rawCategories = payload?.categories || payload;
-    const categoriesArray = Array.isArray(rawCategories) ? rawCategories : [rawCategories];
+    const selectedCat = payload?.category || (Array.isArray(payload?.categories) ? payload.categories[0] : payload);
+    const catId = (typeof selectedCat === 'object' && selectedCat?._id) ? selectedCat._id : selectedCat;
 
-    partner.categories = categoriesArray;
-    if (categoriesArray.length > 0) {
-      partner.category = String(categoriesArray[0]);
-    }
+    partner.category = catId || null;
+    partner.categories = undefined;
     partner.isCategorySelected = true;
 
     await partner.save();
@@ -628,6 +634,7 @@ export class PartnerAuthService {
     const obj = partner.toObject();
     delete obj.password;
     delete obj.refreshToken;
+    delete obj.categories;
 
     const statusInfo = getPartnerOnboardingStatus(partner);
 
