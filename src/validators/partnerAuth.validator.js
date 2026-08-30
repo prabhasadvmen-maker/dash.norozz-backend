@@ -47,7 +47,13 @@ export const onboardingDocumentsRules = [
 ];
 
 export const onboardingCategoryRules = [
-  body('categories').isArray({ min: 1 }).withMessage('categories array with at least 1 Category ID is required'),
+  body().custom((value, { req }) => {
+    const cat = req.body?.category || req.body?.categories;
+    if (!cat || (Array.isArray(cat) && cat.length === 0)) {
+      throw new Error('Service category is required');
+    }
+    return true;
+  }),
 ];
 
 export const onboardingSkillsRules = [
