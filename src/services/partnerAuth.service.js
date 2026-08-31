@@ -32,15 +32,13 @@ export const getPartnerOnboardingStatus = (user) => {
   // 1. Phone Verification Check
   const isPhoneVerified = Boolean(user.isPhoneVerified);
 
-  // 2. Profile Creation Check (name & email)
+  // 2. Profile Creation Check (name & email required)
   const isPlaceholderEmail = !user.email || (user.email.startsWith('partner_') && user.email.endsWith('@norozz.com'));
   const isPlaceholderName = !user.name || user.name.startsWith('Partner ');
+  const hasValidName = Boolean(user.name && user.name.trim() !== '' && !isPlaceholderName);
+  const hasValidEmail = Boolean(user.email && user.email.trim() !== '' && !isPlaceholderEmail);
 
-  const isProfileCompleted = Boolean(
-    user.isProfileCompleted ||
-    (user.name && user.name.trim() !== '' && !isPlaceholderName &&
-     user.email && user.email.trim() !== '' && !isPlaceholderEmail)
-  );
+  const isProfileCompleted = Boolean(hasValidName && hasValidEmail);
 
   // 3. Location Upload Check (GPS coordinates or address & city)
   const hasCoords = Boolean(user.locationCoordinates?.lat && user.locationCoordinates?.lng);
@@ -281,7 +279,7 @@ export class PartnerAuthService {
     }
 
     const allowedFields = [
-      'name', 'agencyName', 'dob', 'gender',
+      'name', 'email', 'agencyName', 'dob', 'gender',
       'assignedCity', 'city', 'category', 'address', 'profileImage',
       'bankDetails', 'experience', 'workRadius', 'localities', 'workingHours', 'referralCode'
     ];

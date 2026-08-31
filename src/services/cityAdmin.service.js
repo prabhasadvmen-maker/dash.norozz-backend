@@ -30,12 +30,17 @@ export class CityAdminService {
       delete pObj.refreshToken;
 
       let catDisplay = '';
-      if (typeof pObj.category === 'object' && pObj.category?.name) {
-        catDisplay = pObj.category.name;
-      } else if (typeof pObj.category === 'string' && !pObj.category.match(/^[0-9a-fA-F]{24}$/)) {
-        catDisplay = pObj.category;
-      } else if (pObj.category && catMap[String(pObj.category._id || pObj.category)]) {
-        catDisplay = catMap[String(pObj.category._id || pObj.category)];
+      if (pObj.category) {
+        if (typeof pObj.category === 'object' && pObj.category !== null) {
+          catDisplay = pObj.category.name || catMap[String(pObj.category._id || pObj.category)] || '';
+        } else {
+          const strCat = String(pObj.category);
+          if (catMap[strCat]) {
+            catDisplay = catMap[strCat];
+          } else if (!strCat.match(/^[0-9a-fA-F]{24}$/)) {
+            catDisplay = strCat;
+          }
+        }
       } else if (Array.isArray(pObj.categories) && pObj.categories.length > 0) {
         const names = pObj.categories
           .map((c) => (typeof c === 'object' && c?.name ? c.name : catMap[String(c._id || c)] || null))

@@ -39,12 +39,17 @@ export class SuperAdminService {
       userObj.city = rawCity || 'Delhi NCR';
 
       let catDisplay = '';
-      if (typeof userObj.category === 'object' && userObj.category?.name) {
-        catDisplay = userObj.category.name;
-      } else if (typeof userObj.category === 'string' && !userObj.category.match(/^[0-9a-fA-F]{24}$/)) {
-        catDisplay = userObj.category;
-      } else if (userObj.category && catMap[String(userObj.category._id || userObj.category)]) {
-        catDisplay = catMap[String(userObj.category._id || userObj.category)];
+      if (userObj.category) {
+        if (typeof userObj.category === 'object' && userObj.category !== null) {
+          catDisplay = userObj.category.name || catMap[String(userObj.category._id || userObj.category)] || '';
+        } else {
+          const strCat = String(userObj.category);
+          if (catMap[strCat]) {
+            catDisplay = catMap[strCat];
+          } else if (!strCat.match(/^[0-9a-fA-F]{24}$/)) {
+            catDisplay = strCat;
+          }
+        }
       } else if (Array.isArray(userObj.categories) && userObj.categories.length > 0) {
         const names = userObj.categories
           .map((c) => (typeof c === 'object' && c?.name ? c.name : catMap[String(c._id || c)] || null))
