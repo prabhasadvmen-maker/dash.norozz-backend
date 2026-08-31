@@ -350,11 +350,18 @@ export class PartnerAuthService {
     await user.save({ validateBeforeSave: false });
 
     // Populate categories & skills for populated user response
-    const populatedUser = await User.findById(user._id)
-      .populate('categories', 'name icon slug')
-      .populate('skills', 'name category');
+    let userObj;
+    try {
+      const populatedUser = await User.findById(user._id)
+        .populate('category', 'name icon slug')
+        .populate('categories', 'name icon slug')
+        .populate('skills', 'name category');
 
-    const userObj = (populatedUser || user).toObject();
+      userObj = (populatedUser || user).toObject();
+    } catch (err) {
+      userObj = user.toObject();
+    }
+
     delete userObj.password;
     delete userObj.refreshToken;
 

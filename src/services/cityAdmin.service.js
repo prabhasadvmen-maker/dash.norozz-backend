@@ -30,13 +30,15 @@ export class CityAdminService {
       delete pObj.refreshToken;
 
       let catDisplay = '';
-      if (pObj.category && !pObj.category.match(/^[0-9a-fA-F]{24}$/)) {
+      if (typeof pObj.category === 'object' && pObj.category?.name) {
+        catDisplay = pObj.category.name;
+      } else if (typeof pObj.category === 'string' && !pObj.category.match(/^[0-9a-fA-F]{24}$/)) {
         catDisplay = pObj.category;
-      } else if (pObj.category && catMap[pObj.category]) {
-        catDisplay = catMap[pObj.category];
+      } else if (pObj.category && catMap[String(pObj.category._id || pObj.category)]) {
+        catDisplay = catMap[String(pObj.category._id || pObj.category)];
       } else if (Array.isArray(pObj.categories) && pObj.categories.length > 0) {
         const names = pObj.categories
-          .map((c) => (typeof c === 'object' && c?.name ? c.name : catMap[String(c)] || null))
+          .map((c) => (typeof c === 'object' && c?.name ? c.name : catMap[String(c._id || c)] || null))
           .filter(Boolean);
         if (names.length > 0) catDisplay = names.join(', ');
       }
@@ -50,6 +52,7 @@ export class CityAdminService {
   async getDashboardStats(assignedCity) {
     const cityBookings = await this.getCityBookings(assignedCity);
     const cityPartners = await this.getCityPartners(assignedCity);
+    const cityCustomersCount = await userRepository.count({ role: ROLES.CUSTOMER });
 
     const totalOrders = cityBookings.length;
     const pendingOrders = cityBookings.filter((b) => ['pending', 'Pending', 'assigned', 'Assigned'].includes(b.status)).length;
@@ -60,8 +63,8 @@ export class CityAdminService {
       cityRevenue += Number(b.amount || b.totalAmount || b.financialSnapshot?.customerPayable || 0);
     });
 
-    const activePartners = cityPartners.filter((p) => p.kycStatus === 'approved').length;
-    const pendingPartners = cityPartners.filter((p) => p.kycStatus === 'pending').length;
+    const activePartners = cityPartners.filter((p) => (p.kycStatus || '').toLowerCase() === 'approved').length;
+    const pendingPartners = cityPartners.filter((p) => (p.kycStatus || 'pending').toLowerCase() === 'pending').length;
 
     return {
       assignedCity,
@@ -77,7 +80,7 @@ export class CityAdminService {
         cityRevenue: cityRevenue,
         activePartners: activePartners,
         pendingKycPartners: pendingPartners,
-        cityCustomers: 0,
+        cityCustomers: cityCustomersCount || 0,
       },
     };
   }

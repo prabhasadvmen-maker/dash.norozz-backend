@@ -12,9 +12,9 @@ import { ROLES } from '../constants/roles.constant.js';
 
 const router = Router();
 
-// Protect ALL City Admin endpoints with JWT + CityAdmin RBAC
+// Protect ALL City Admin endpoints with JWT + CityAdmin / SuperAdmin RBAC
 router.use(verifyJWT);
-router.use(authorizeRoles(ROLES.CITY_ADMIN, ROLES.ADMIN));
+router.use(authorizeRoles(ROLES.SUPER_ADMIN, ROLES.CITY_ADMIN, ROLES.ADMIN));
 
 // City Dashboard & Revenue Analytics
 router.get('/dashboard', cityAdminController.getDashboard);

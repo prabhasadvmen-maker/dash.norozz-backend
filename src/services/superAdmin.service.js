@@ -39,13 +39,15 @@ export class SuperAdminService {
       userObj.city = rawCity || 'Delhi NCR';
 
       let catDisplay = '';
-      if (userObj.category && !userObj.category.match(/^[0-9a-fA-F]{24}$/)) {
+      if (typeof userObj.category === 'object' && userObj.category?.name) {
+        catDisplay = userObj.category.name;
+      } else if (typeof userObj.category === 'string' && !userObj.category.match(/^[0-9a-fA-F]{24}$/)) {
         catDisplay = userObj.category;
-      } else if (userObj.category && catMap[userObj.category]) {
-        catDisplay = catMap[userObj.category];
+      } else if (userObj.category && catMap[String(userObj.category._id || userObj.category)]) {
+        catDisplay = catMap[String(userObj.category._id || userObj.category)];
       } else if (Array.isArray(userObj.categories) && userObj.categories.length > 0) {
         const names = userObj.categories
-          .map((c) => (typeof c === 'object' && c?.name ? c.name : catMap[String(c)] || null))
+          .map((c) => (typeof c === 'object' && c?.name ? c.name : catMap[String(c._id || c)] || null))
           .filter(Boolean);
         if (names.length > 0) catDisplay = names.join(', ');
       }
