@@ -1,17 +1,45 @@
 import { userRepository } from '../repositories/user.repository.js';
 import { bookingRepository } from '../repositories/booking.repository.js';
 import { Category } from '../models/category.model.js';
+import { City } from '../models/city.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { ROLES } from '../constants/roles.constant.js';
 
 export class CityAdminService {
 
-  // Helper to match city
-  matchesCity(entity, assignedCity) {
+  // Helper to build city ID <-> City Name mapping
+  async getCityNameMap() {
+    try {
+      const cities = await City.find({}).lean();
+      const map = {};
+      cities.forEach((c) => {
+        if (c._id && c.name) {
+          const idStr = String(c._id).toLowerCase();
+          const nameStr = String(c.name).toLowerCase();
+          map[idStr] = nameStr;
+          map[nameStr] = nameStr;
+        }
+      });
+      return map;
+    } catch (err) {
+      return {};
+    }
+  }
+
+  // Helper to match city strictly by name or ObjectId
+  matchesCity(entity, assignedCity, cityMap = {}) {
     if (!entity || !assignedCity) return false;
-    const target = String(assignedCity).trim().toLowerCase();
-    const eCity = String(entity.assignedCity || entity.city || entity.address?.city || '').trim().toLowerCase();
+    let target = String(assignedCity).trim().toLowerCase();
+    if (cityMap[target]) target = cityMap[target];
+
+    let eCityRaw = entity.assignedCity || entity.city || entity.address?.city || '';
+    if (typeof eCityRaw === 'object' && eCityRaw !== null) {
+      eCityRaw = eCityRaw.name || eCityRaw._id || '';
+    }
+    let eCity = String(eCityRaw).trim().toLowerCase();
+    if (cityMap[eCity]) eCity = cityMap[eCity];
+
     return eCity === target;
   }
 
@@ -90,12 +118,12 @@ export class CityAdminService {
     };
   }
 
-  // 2. PARTNER MANAGEMENT & KYC VERIFICATION
+  // 2. PARTNER MANAGEMENT & KYC VERIFICATION (Scoped STRICTLY to assignedCity Jurisdiction)
   async getCityPartners(assignedCity) {
+    const cityMap = await this.getCityNameMap();
     const allPartners = await userRepository.find({ role: ROLES.PARTNER }, '-password', { createdAt: -1 });
-    const filtered = allPartners.filter(p => this.matchesCity(p, assignedCity));
-    const list = filtered.length > 0 ? filtered : allPartners;
-    return await this.populateCategoryNames(list);
+    const filtered = allPartners.filter(p => this.matchesCity(p, assignedCity, cityMap));
+    return await this.populateCategoryNames(filtered);
   }
 
   async approvePartner(partnerId, assignedCity) {

@@ -110,6 +110,20 @@ export class PartnerAuthController extends BaseController {
     const result = await partnerAuthService.getKycStatus(req.user._id);
     return this.sendSuccess(res, result, 'Partner KYC Status retrieved successfully');
   });
+
+  addCertification = asyncHandler(async (req, res) => {
+    const result = await partnerAuthService.addCertification(req.user._id, {
+      title: req.body.title,
+      file: req.file,
+      image: req.body.image,
+    });
+    return this.sendSuccess(res, result, result.message);
+  });
+
+  deleteCertification = asyncHandler(async (req, res) => {
+    const result = await partnerAuthService.deleteCertification(req.user._id, req.params.certId);
+    return this.sendSuccess(res, result, result.message);
+  });
 }
 
 export const partnerAuthController = new PartnerAuthController();

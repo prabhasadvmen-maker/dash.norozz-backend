@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { User } from '../models/user.model.js';
 import { userRepository } from '../repositories/user.repository.js';
 import { otpRepository } from '../repositories/otp.repository.js';
@@ -7,6 +8,7 @@ import { notificationService } from './notificationService.js';
 import { ApiError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { ROLES } from '../constants/roles.constant.js';
+import { normalizePhoneNumber, generatePartnerUserId } from '../utils/phone.util.js';
 
 /**
  * Helper function to determine partner onboarding progress status and next action step
@@ -130,7 +132,7 @@ export const getPartnerOnboardingStatus = (user) => {
 export class PartnerAuthService {
   // 1a. REQUEST PARTNER OTP LOGIN
   async requestOtpLogin(phone) {
-    const cleanPhone = phone.trim();
+    const cleanPhone = normalizePhoneNumber(phone);
     const existingUser = await userRepository.findByPhone(cleanPhone);
     if (existingUser && existingUser.role !== ROLES.PARTNER) {
       throw new ApiError(
@@ -165,7 +167,7 @@ export class PartnerAuthService {
 
   // 1b. VERIFY PARTNER OTP LOGIN
   async verifyOtpLogin(phone, otp) {
-    const cleanPhone = phone.trim();
+    const cleanPhone = normalizePhoneNumber(phone);
     const validOtp = await otpRepository.findLatestValidOtp(cleanPhone, 'partnerLogin');
     if (!validOtp || validOtp.otp !== otp) {
       throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Invalid or expired OTP code');
@@ -184,10 +186,8 @@ export class PartnerAuthService {
     if (!user) {
       isNewPartner = true;
 
-      // Generate unique Partner User ID (e.g. NRZ-P-872874)
-      const cleanPhoneDigits = cleanPhone.replace(/\D/g, '');
-      const lastDigits = cleanPhoneDigits.slice(-6);
-      const generatedUserId = `NRZ-P-${lastDigits}`;
+      // Generate unique Partner User ID (e.g. NRZ-P-600653)
+      const generatedUserId = generatePartnerUserId(cleanPhone);
 
       user = await userRepository.create({
         userId: generatedUserId,
@@ -213,11 +213,11 @@ export class PartnerAuthService {
       });
     } else {
       user.isPhoneVerified = true;
+      user.phone = cleanPhone;
 
-      // Generate userId if missing
+      // Generate userId if missing or legacy format
       if (!user.userId) {
-        const cleanPhoneDigits = cleanPhone.replace(/\D/g, '');
-        user.userId = `NRZ-P-${cleanPhoneDigits.slice(-6)}`;
+        user.userId = generatePartnerUserId(cleanPhone);
       }
     }
 
@@ -368,15 +368,17 @@ export class PartnerAuthService {
 
   // 1. PARTNER SIGNUP (Default status: PENDING KYC)
   async signup(partnerData) {
+    const normalizedPhone = partnerData.phone ? normalizePhoneNumber(partnerData.phone) : '';
     const existing = partnerData.email ? await userRepository.findByEmail(partnerData.email) : null;
     if (existing) {
       throw new ApiError(HTTP_STATUS.CONFLICT, 'Partner account with this email already exists');
     }
 
-    const cleanDigits = partnerData.phone ? partnerData.phone.replace(/\D/g, '').slice(-6) : Math.floor(100000 + Math.random() * 900000);
+    const generatedUserId = generatePartnerUserId(normalizedPhone || partnerData.phone);
     const newPartner = await userRepository.create({
-      userId: `NRZ-P-${cleanDigits}`,
+      userId: generatedUserId,
       ...partnerData,
+      phone: normalizedPhone || partnerData.phone,
       role: ROLES.PARTNER,
       kycStatus: 'pending', // Default status: Pending until City Admin approves
       status: 'active',
@@ -560,8 +562,11 @@ export class PartnerAuthService {
     }
     if (address) partner.address = address;
     if (city) {
-      partner.assignedCity = city;
       partner.city = city;
+      // Preserve partner's chosen operational city for City Admin jurisdiction & KYC approvals
+      if (!partner.assignedCity) {
+        partner.assignedCity = city;
+      }
     }
     if (landmark) partner.landmark = landmark;
 
@@ -837,6 +842,87 @@ export class PartnerAuthService {
       workRadius: partner.workRadius,
       localities: partner.localities,
       workingHours: partner.workingHours,
+    };
+  }
+
+  // 8. ADD INDIVIDUAL CERTIFICATE (Upload photo/file to Cloudflare R2 & save to partner certifications array)
+  async addCertification(partnerId, { title, file, image }) {
+    const partner = await userRepository.findById(partnerId);
+    if (!partner || partner.role !== ROLES.PARTNER) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner account not found');
+    }
+
+    let certUrl = '';
+    if (file) {
+      const res = await r2StorageService.uploadFile(file.buffer, file.originalname, file.mimetype, 'norozz_certifications');
+      certUrl = res.url;
+    } else if (image && typeof image === 'string' && image.startsWith('data:image')) {
+      certUrl = await r2StorageService.uploadBase64Image(image, 'norozz_certifications');
+    } else if (image && typeof image === 'string') {
+      certUrl = image;
+    }
+
+    const certId = new mongoose.Types.ObjectId().toString();
+    const newCert = {
+      _id: certId,
+      id: certId,
+      title: (title || 'Professional Certificate').trim(),
+      url: certUrl,
+      image: certUrl,
+      createdAt: new Date(),
+    };
+
+    const currentCerts = Array.isArray(partner.certifications) ? [...partner.certifications] : [];
+    currentCerts.push(newCert);
+    partner.certifications = currentCerts;
+
+    await partner.save({ validateBeforeSave: false });
+
+    const obj = partner.toObject();
+    delete obj.password;
+    delete obj.refreshToken;
+
+    const statusInfo = getPartnerOnboardingStatus(partner);
+
+    return {
+      message: 'Certificate uploaded and saved successfully to database & Cloudflare R2.',
+      certification: newCert,
+      user: obj,
+      nextStep: statusInfo.nextStep,
+      onboardingStatus: statusInfo.onboardingStatus,
+    };
+  }
+
+  // 9. DELETE CERTIFICATE (Remove certificate from partner certifications array by _id or index)
+  async deleteCertification(partnerId, certId) {
+    const partner = await userRepository.findById(partnerId);
+    if (!partner || partner.role !== ROLES.PARTNER) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner account not found');
+    }
+
+    const currentCerts = Array.isArray(partner.certifications) ? partner.certifications : [];
+    const updatedCerts = currentCerts.filter((c, idx) => {
+      if (typeof c === 'object' && c !== null) {
+        const idStr = String(c._id || c.id || '');
+        return idStr !== String(certId) && String(idx) !== String(certId);
+      }
+      return String(idx) !== String(certId) && String(c) !== String(certId);
+    });
+
+    partner.certifications = updatedCerts;
+    await partner.save({ validateBeforeSave: false });
+
+    const obj = partner.toObject();
+    delete obj.password;
+    delete obj.refreshToken;
+
+    const statusInfo = getPartnerOnboardingStatus(partner);
+
+    return {
+      message: 'Certificate deleted successfully from partner profile.',
+      user: obj,
+      nextStep: statusInfo.nextStep,
+      onboardingStatus: statusInfo.onboardingStatus,
     };
   }
 }

@@ -1,5 +1,6 @@
 import { BaseRepository } from './base.repository.js';
 import { User } from '../models/user.model.js';
+import { normalizePhoneNumber, getBase10PhoneNumber } from '../utils/phone.util.js';
 
 /**
  * User Repository extending BaseRepository
@@ -20,12 +21,14 @@ export class UserRepository extends BaseRepository {
   async findByPhone(phone, selectWithPassword = false) {
     if (!phone) return null;
     const clean = phone.trim();
-    const digits = clean.replace(/\D/g, '');
-    const isPhone = digits.length >= 7;
-    const base10 = digits.length >= 10 ? digits.slice(-10) : digits;
+    const base10 = getBase10PhoneNumber(clean);
+    const normalized = normalizePhoneNumber(clean);
 
-    const searchConditions = [{ phone: clean }];
-    if (isPhone) {
+    const searchConditions = [
+      { phone: normalized },
+      { phone: clean },
+    ];
+    if (base10) {
       searchConditions.push(
         { phone: base10 },
         { phone: `+91${base10}` },
@@ -39,36 +42,24 @@ export class UserRepository extends BaseRepository {
     if (selectWithPassword) {
       query.select('+password');
     }
-    return await query;
+    const user = await query;
+
+    // Self-healing: Automatically normalize legacy stored phone number format to canonical +91
+    if (user && user.phone && user.phone !== normalized) {
+      user.phone = normalized;
+      await user.save({ validateBeforeSave: false }).catch(() => {});
+    }
+
+    return user;
   }
 
   async findByEmailOrPhone(identifier, selectWithPassword = false) {
     if (!identifier) return null;
     const clean = identifier.trim();
-    const digits = clean.replace(/\D/g, '');
-    const isPhone = digits.length >= 7;
-    const base10 = digits.length >= 10 ? digits.slice(-10) : digits;
-
-    const orConditions = [
-      { email: clean.toLowerCase() },
-      { phone: clean }
-    ];
-
-    if (isPhone) {
-      orConditions.push(
-        { phone: base10 },
-        { phone: `+91${base10}` },
-        { phone: `91${base10}` },
-        { phone: `0${base10}` },
-        { phone: new RegExp(`${base10}$`) }
-      );
+    if (clean.includes('@')) {
+      return await this.findByEmail(clean.toLowerCase(), selectWithPassword);
     }
-
-    const query = this.model.findOne({ $or: orConditions });
-    if (selectWithPassword) {
-      query.select('+password');
-    }
-    return await query;
+    return await this.findByPhone(clean, selectWithPassword);
   }
 
   async updateRefreshToken(userId, refreshToken) {

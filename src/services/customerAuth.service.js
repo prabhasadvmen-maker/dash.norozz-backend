@@ -6,6 +6,7 @@ import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { ROLES } from '../constants/roles.constant.js';
 import { notificationService } from './notificationService.js';
 import { storageService } from './storage.service.js';
+import { normalizePhoneNumber } from '../utils/phone.util.js';
 
 export class CustomerAuthService {
 
@@ -64,7 +65,8 @@ export class CustomerAuthService {
 
   // 3. OTP LOGIN (REQUEST & VERIFY)
   async requestOtpLogin(emailOrPhone) {
-    const existingUser = await userRepository.findByEmailOrPhone(emailOrPhone);
+    const normalizedInput = emailOrPhone && !emailOrPhone.includes('@') ? normalizePhoneNumber(emailOrPhone) : emailOrPhone;
+    const existingUser = await userRepository.findByEmailOrPhone(normalizedInput);
     if (existingUser && existingUser.role !== ROLES.CUSTOMER) {
       const roleName = existingUser.role === ROLES.PARTNER ? 'Partner' : 'Admin';
       throw new ApiError(
@@ -78,26 +80,27 @@ export class CustomerAuthService {
     const expiresAt = new Date(Date.now() + otpExpirySec * 1000);
 
     await otpRepository.create({
-      emailOrPhone,
+      emailOrPhone: normalizedInput,
       otp: generatedOtp,
       type: 'login',
       expiresAt,
     });
 
     // Dispatch Email OTP via Brevo or Mobile SMS OTP
-    await notificationService.dispatchOtp(emailOrPhone, generatedOtp);
+    await notificationService.dispatchOtp(normalizedInput, generatedOtp);
 
-    return { emailOrPhone, otp: generatedOtp, message: 'OTP sent successfully for instant login' };
+    return { emailOrPhone: normalizedInput, otp: generatedOtp, message: 'OTP sent successfully for instant login' };
   }
 
   async verifyOtpLogin(emailOrPhone, otp) {
-    const validOtp = await otpRepository.findLatestValidOtp(emailOrPhone, 'login');
+    const normalizedInput = emailOrPhone && !emailOrPhone.includes('@') ? normalizePhoneNumber(emailOrPhone) : emailOrPhone;
+    const validOtp = await otpRepository.findLatestValidOtp(normalizedInput, 'login');
     if (!validOtp || validOtp.otp !== otp) {
       throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Invalid or expired OTP code');
     }
 
     let isNewUser = false;
-    let user = await userRepository.findByEmailOrPhone(emailOrPhone);
+    let user = await userRepository.findByEmailOrPhone(normalizedInput);
     if (user && user.role !== ROLES.CUSTOMER) {
       const roleName = user.role === ROLES.PARTNER ? 'Partner' : 'Admin';
       throw new ApiError(
@@ -108,7 +111,7 @@ export class CustomerAuthService {
 
     if (!user) {
       isNewUser = true;
-      const cleanId = emailOrPhone.trim();
+      const cleanId = normalizedInput.trim();
       const isEmail = cleanId.includes('@');
       const cleanDigits = !isEmail ? cleanId.replace(/\D/g, '').slice(-6) : Math.floor(100000 + Math.random() * 900000);
       const generatedUserId = `NRZ-C-${cleanDigits}`;

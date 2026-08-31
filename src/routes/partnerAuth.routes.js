@@ -58,4 +58,8 @@ router.post('/onboarding/skills', verifyJWT, onboardingSkillsRules, validate, pa
 router.post('/onboarding/service-area', verifyJWT, onboardingServiceAreaRules, validate, partnerAuthController.saveOnboardingServiceArea);
 router.post('/onboarding/working-hours', verifyJWT, onboardingWorkingHoursRules, validate, partnerAuthController.saveOnboardingWorkingHours);
 
+// Individual Certification Upload & Delete Endpoints
+router.post('/certifications', verifyJWT, upload.single('certificateFile'), partnerAuthController.addCertification);
+router.delete('/certifications/:certId', verifyJWT, partnerAuthController.deleteCertification);
+
 export default router;
