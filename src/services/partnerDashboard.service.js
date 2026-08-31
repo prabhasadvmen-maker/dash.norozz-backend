@@ -11,6 +11,9 @@ export class PartnerDashboardService {
 
   // Helper: Enforce KYC Approval check
   checkKycApproved(partner) {
+    if (!partner) {
+      throw new ApiError(HTTP_STATUS.UNAUTHORIZED, 'Partner authentication required');
+    }
     if (partner.kycStatus !== 'approved') {
       throw new ApiError(
         HTTP_STATUS.FORBIDDEN,
@@ -21,6 +24,9 @@ export class PartnerDashboardService {
 
   // 1. DASHBOARD OVERVIEW & CARDS
   async getDashboardOverview(partner) {
+    if (!partner) {
+      throw new ApiError(HTTP_STATUS.UNAUTHORIZED, 'Partner authentication required');
+    }
     const isApproved = partner.kycStatus === 'approved';
 
     if (!isApproved) {
