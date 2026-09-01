@@ -7,10 +7,16 @@ const skillSchema = new mongoose.Schema(
       required: [true, 'Skill Name is required'],
       trim: true,
     },
+    service: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Service',
+      default: null,
+      index: true,
+    },
     category: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Category',
-      required: [true, 'Category reference is required when creating a skill'],
+      default: null,
       index: true,
     },
     description: {
@@ -40,7 +46,8 @@ const skillSchema = new mongoose.Schema(
   }
 );
 
-// Compound index for uniqueness per category
-skillSchema.index({ category: 1, name: 1 }, { unique: true });
+// Compound indices for search
+skillSchema.index({ service: 1, name: 1 });
+skillSchema.index({ category: 1, name: 1 });
 
 export const Skill = mongoose.model('Skill', skillSchema);

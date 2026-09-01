@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import { Category } from './models/category.model.js';
 import { SubCategory } from './models/subCategory.model.js';
 import { Service } from './models/service.model.js';
+import { ServicePackage } from './models/servicePackage.model.js';
 
 dotenv.config();
 
@@ -507,10 +508,9 @@ export async function seedCatalogData() {
               price: srv.price,
               discount: srv.discount || 0,
               finalPrice: finalP,
-              packages: srv.packages || [],
               thumbnail: srv.thumbnail,
               gallery: [srv.thumbnail],
-              cities: ['Delhi NCR'],
+              cities: ['Delhi NCR', 'Bengaluru', 'Mumbai', 'Hyderabad', 'Pune', 'Jaipur', 'Nizamabad'],
               tags: srv.tags || [],
               sortOrder: srvSort++,
               status: 'active',
@@ -518,6 +518,44 @@ export async function seedCatalogData() {
             console.log(`      🛠️ Created Service: ${service.name} (Price: ₹${service.finalPrice})`);
           } else {
             console.log(`      🛠️ Service exists: ${service.name}`);
+          }
+
+          // Seed dedicated ServicePackage documents linked to parent service (Single Source of Truth)
+          if (Array.isArray(srv.packages) && srv.packages.length > 0) {
+            let pkgOrder = 0;
+            for (const pkg of srv.packages) {
+              let existingPkg = await ServicePackage.findOne({
+                service: service._id,
+                title: pkg.title,
+              });
+
+              if (!existingPkg) {
+                const slugName = (pkg.title || 'package')
+                  .toLowerCase()
+                  .trim()
+                  .replace(/[^a-z0-9 -]/g, '')
+                  .replace(/\s+/g, '-')
+                  .replace(/-+/g, '-');
+
+                await ServicePackage.create({
+                  service: service._id,
+                  title: pkg.title,
+                  slug: `${slugName}-${pkgOrder + 1}`,
+                  description: pkg.description || service.description || '',
+                  price: pkg.price || service.price || 499,
+                  discountType: 'none',
+                  discountValue: 0,
+                  finalPrice: pkg.price || service.price || 499,
+                  duration: service.duration || '45 mins',
+                  features: Array.isArray(pkg.features) ? pkg.features : [],
+                  isPopular: Boolean(pkg.isPopular),
+                  isRecommended: pkgOrder === 0,
+                  sortOrder: pkgOrder++,
+                  status: 'active',
+                });
+                console.log(`        📦 Created Service Package: ${pkg.title} (₹${pkg.price})`);
+              }
+            }
           }
         }
       }

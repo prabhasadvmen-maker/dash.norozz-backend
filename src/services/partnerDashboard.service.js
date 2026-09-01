@@ -3,9 +3,11 @@ import { bookingRepository } from '../repositories/booking.repository.js';
 import { Complaint } from '../models/complaint.model.js';
 import { SupportChat } from '../models/supportChat.model.js';
 import { WalletTransaction } from '../models/walletTransaction.model.js';
+import { r2StorageService } from './r2Storage.service.js';
 import bcrypt from 'bcryptjs';
 import { ApiError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
+import { isWithinOperatingRadius } from '../utils/distance.util.js';
 
 export class PartnerDashboardService {
 
@@ -92,20 +94,46 @@ export class PartnerDashboardService {
 
   async getPendingBookings(partner) {
     this.checkKycApproved(partner);
-    const partnerCity = partner.city || 'Delhi NCR';
 
-    return await bookingRepository.model
+    const partnerCity = (partner.assignedCity || partner.city || 'Jaunpur').trim().toLowerCase();
+    const partnerCatId = partner.category?._id ? String(partner.category._id) : String(partner.category || '');
+    const partnerCats = Array.isArray(partner.categories) ? partner.categories.map((c) => String(c._id || c)) : [];
+
+    // Query all open unassigned pending bookings from DB
+    const openBookings = await bookingRepository.model
       .find({
-        $or: [
-          { partner: partner._id, status: { $in: ['Pending', 'pending', 'Assigned', 'assigned'] } },
-          { partner: null, status: { $in: ['Pending', 'pending'] }, city: partnerCity },
-          { partner: null, status: { $in: ['Pending', 'pending'] } },
-        ],
+        partner: null,
+        status: { $in: ['Pending', 'pending'] },
       })
       .populate('category', 'name slug image')
       .populate('service', 'name slug price finalPrice duration')
       .populate('customer', 'name email phone')
       .sort({ createdAt: -1 });
+
+    // Filter strictly by Category, Offered Services, and Work Area / City
+    return openBookings.filter((b) => {
+      // 1. Category check
+      const bCatId = b.category?._id ? String(b.category._id) : String(b.category || '');
+      const isCatMatch = !partnerCatId || partnerCatId === bCatId || partnerCats.includes(bCatId);
+      if (!isCatMatch) return false;
+
+      // 2. Offered Services check: If partner selected specific offeredServices, verify serviceId is present
+      if (Array.isArray(partner.offeredServices) && partner.offeredServices.length > 0 && b.service) {
+        const bSvcId = b.service?._id ? String(b.service._id) : String(b.service);
+        const pServices = partner.offeredServices.map((s) => String(s._id || s));
+        if (!pServices.includes(bSvcId)) return false;
+      }
+
+      // 3. Geographic Operating Radius Match (locationCoordinates distance <= serviceRadius KM)
+      const partnerCoords = partner.locationCoordinates || partner.location;
+      const bookingCoords = b.address?.locationCoordinates || b.locationCoordinates;
+      const partnerRadius = partner.serviceRadius || partner.workRadius || partner.operatingRadius || 8;
+
+      const { isWithinRadius } = isWithinOperatingRadius(partnerCoords, bookingCoords, partnerRadius);
+      if (!isWithinRadius) return false;
+
+      return true;
+    });
   }
 
   async getCompletedBookings(partner) {
@@ -136,15 +164,11 @@ export class PartnerDashboardService {
 
   async getAllBookings(partner) {
     this.checkKycApproved(partner);
-    const partnerCity = partner.city || 'Delhi NCR';
 
+    // Return ONLY this partner's own claimed / assigned bookings
     return await bookingRepository.model
       .find({
-        $or: [
-          { partner: partner._id },
-          { partner: null, status: { $in: ['Pending', 'pending'] }, city: partnerCity },
-          { partner: null, status: { $in: ['Pending', 'pending'] } },
-        ],
+        partner: partner._id,
       })
       .populate('category', 'name slug image')
       .populate('service', 'name slug price finalPrice duration')
@@ -165,7 +189,11 @@ export class PartnerDashboardService {
       .populate('category', 'name slug image')
       .populate('service', 'name slug price finalPrice duration description')
       .populate('customer', 'name email phone rating createdAt')
-      .populate('partner', 'name agencyName phone profileImage rating city');
+      .populate({
+        path: 'partner',
+        select: 'name agencyName phone profileImage rating city offeredServices',
+        populate: { path: 'offeredServices', select: 'name title price description' }
+      });
 
     if (!booking) {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Booking not found or no longer available');
@@ -386,7 +414,15 @@ export class PartnerDashboardService {
 
   // 5. PROFILE & AVAILABILITY MANAGEMENT
   async getProfile(partner) {
-    const p = await userRepository.findById(partner._id);
+    const p = await userRepository.model
+      .findById(partner._id)
+      .populate('category', 'name slug image')
+      .populate('categories', 'name slug image')
+      .populate('offeredServices', 'name title slug')
+      .populate('skills', 'name slug');
+    if (!p) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner profile not found');
+    }
     const obj = p.toObject();
     delete obj.password;
     return obj;
@@ -396,6 +432,16 @@ export class PartnerDashboardService {
     const cleanData = { ...updateData };
     delete cleanData.email;
     delete cleanData.phone;
+
+    // Upload base64 profile image to Cloudflare R2 storage and save public URL in DB
+    if (cleanData.profileImage && typeof cleanData.profileImage === 'string' && cleanData.profileImage.startsWith('data:image')) {
+      try {
+        cleanData.profileImage = await r2StorageService.uploadBase64Image(cleanData.profileImage, 'norozz_partner_profiles');
+      } catch (err) {
+        console.warn('R2 Storage upload notice:', err);
+      }
+    }
+
     const updated = await userRepository.updateById(partnerId, cleanData);
     const obj = updated.toObject();
     delete obj.password;

@@ -3,6 +3,7 @@ import { userRepository } from '../repositories/user.repository.js';
 import { bookingRepository } from '../repositories/booking.repository.js';
 import { ChatMessage } from '../models/chat.model.js';
 import { ROLES } from '../constants/roles.constant.js';
+import { isWithinOperatingRadius } from '../utils/distance.util.js';
 
 let io = null;
 
@@ -41,9 +42,11 @@ export const initSockets = (httpServer) => {
         const partnerRoom = `partner_${partnerId}`;
         socket.join(partnerRoom);
 
-        // Join Category & City Room (e.g. category_AC & Appliance Repair_Delhi NCR)
-        if (category) {
-          const categoryRoom = `category_${category.trim()}_${(city || 'Delhi NCR').trim()}`;
+        // Join Category & City Room (e.g. category_Beauty & Salon_Jaunpur)
+        const catStr = typeof category === 'object' ? (category?.name || category?._id || '') : String(category || '');
+        const cityStr = String(city || 'Jaunpur').trim();
+        if (catStr && catStr.trim()) {
+          const categoryRoom = `category_${catStr.trim()}_${cityStr}`;
           socket.join(categoryRoom);
           console.log(`👤 Partner ${partnerId} joined category room: [${categoryRoom}]`);
         }
@@ -215,9 +218,9 @@ export const initSockets = (httpServer) => {
         });
 
         // Broadcast to all other partners to dismiss incoming job offer
-        const categoryName = updatedBooking.category?.name || partner.category || '';
-        const bookingCity = updatedBooking.city || partner.assignedCity || 'Delhi NCR';
-        const categoryRoom = `category_${categoryName.trim()}_${bookingCity.trim()}`;
+        const categoryName = typeof updatedBooking.category === 'object' ? (updatedBooking.category?.name || '') : String(updatedBooking.category || partner.category || '');
+        const bookingCity = String(updatedBooking.city || partner.assignedCity || 'Jaunpur').trim();
+        const categoryRoom = `category_${String(categoryName).trim()}_${bookingCity}`;
 
         io.to(categoryRoom).to('all_online_partners').emit('job_claimed', {
           bookingId,
@@ -387,42 +390,85 @@ export const dispatchNewJobOffer = async (booking) => {
   }
 
   try {
-    const categoryName = typeof booking.category === 'object' ? booking.category?.name : booking.category;
-    const bookingCity = booking.city || booking.address?.city || 'Delhi NCR';
+    const categoryObj = typeof booking.category === 'object' ? booking.category : null;
+    const categoryId = categoryObj?._id ? String(categoryObj._id) : String(booking.category || '');
+    const categoryName = categoryObj?.name || 'Home Services';
+
+    const serviceObj = typeof booking.service === 'object' ? booking.service : null;
+    const serviceId = serviceObj?._id ? String(serviceObj._id) : String(booking.service || '');
+    const serviceName = serviceObj?.name || booking.packageName || 'Service Request';
+
+    const bookingCity = booking.city || booking.address?.city || 'Jaunpur';
     const addressLine = booking.address?.addressLine || `${bookingCity} Operational Area`;
 
-    // 1. Fetch eligible online partners in database to filter by work radius / category
-    const eligiblePartners = await userRepository.find({
+    // Fetch all active online partners
+    const partners = await userRepository.find({
       role: ROLES.PARTNER,
       status: 'active',
-      kycStatus: 'approved',
-      isOnline: true,
-      $or: [{ assignedCity: bookingCity }, { city: bookingCity }],
     });
 
-    console.log(`📢 Dispatching Booking [${booking.bookingId || booking._id}] to ${eligiblePartners.length} online approved partners...`);
+    // Filter partners based on offeredServices, Category, and Work Area City
+    const eligiblePartners = partners.filter((partner) => {
+      // 1. Category check
+      const partnerCatId = partner.category?._id ? String(partner.category._id) : String(partner.category || '');
+      const partnerCats = Array.isArray(partner.categories) ? partner.categories.map((c) => String(c._id || c)) : [];
+      const isCatMatch = partnerCatId === categoryId || partnerCats.includes(categoryId) || !categoryId;
+
+      if (!isCatMatch) return false;
+
+      // 2. Offered Services check: If partner selected specific offeredServices, verify serviceId is present
+      if (Array.isArray(partner.offeredServices) && partner.offeredServices.length > 0 && serviceId) {
+        const pServices = partner.offeredServices.map((s) => String(s._id || s));
+        const isSvcMatch = pServices.includes(serviceId);
+        if (!isSvcMatch) return false;
+      }
+
+      // 3. Geographic Operating Radius Match (locationCoordinates distance <= serviceRadius KM)
+      const partnerCoords = partner.locationCoordinates || partner.location;
+      const bookingCoords = booking.address?.locationCoordinates || booking.locationCoordinates;
+      const partnerRadius = partner.serviceRadius || partner.workRadius || partner.operatingRadius || 8;
+
+      const { isWithinRadius, distanceKm } = isWithinOperatingRadius(partnerCoords, bookingCoords, partnerRadius);
+      if (!isWithinRadius) {
+        console.log(`⛔ Skipping partner [${partner.name}] for booking [${booking.bookingId || booking._id}]: Distance ${distanceKm}km exceeds ${partnerRadius}km operating radius`);
+        return false;
+      }
+
+      return true;
+    });
+
+    console.log(`📢 Real-time Dispatching Booking [${booking.bookingId || booking._id}] for Service [${serviceName}] to ${eligiblePartners.length} matching partners!`);
 
     const offerPayload = {
       bookingId: booking._id,
       bookingNumber: booking.bookingId || `UC-${booking._id.toString().slice(-5).toUpperCase()}`,
-      serviceTitle: booking.packageName || booking.service?.name || 'Home Service',
-      categoryName: categoryName || 'Appliance Repair',
+      serviceTitle: booking.packageName || serviceName,
+      serviceId,
+      categoryName,
+      categoryId,
       customerName: booking.customer?.name || 'Customer',
       customerPhone: booking.customer?.phone || '',
       address: `${booking.address?.title ? booking.address.title + ': ' : ''}${addressLine}, ${bookingCity}`,
       city: bookingCity,
-      amount: booking.amount || booking.service?.finalPrice || 599,
+      amount: booking.amount || serviceObj?.finalPrice || 599,
+      financialSnapshot: booking.financialSnapshot,
       timeSlot: booking.timeSlot || 'Immediate / 10:30 AM',
       createdAt: new Date(),
       expirySeconds: 60,
     };
 
-    // Broadcast to Category & City Room
-    const categoryRoom = `category_${(categoryName || '').trim()}_${bookingCity.trim()}`;
-    io.to(categoryRoom).emit('new_job_offer', offerPayload);
+    // 1. Emit directly to each matching partner's individual room
+    eligiblePartners.forEach((partner) => {
+      const partnerRoom = `partner_${partner._id}`;
+      io.to(partnerRoom).emit('new_job_offer', offerPayload);
+      console.log(`📡 Emitted new_job_offer to room [${partnerRoom}] (${partner.name})`);
+    });
 
-    // Also broadcast to all_online_partners for max reach/testing
-    io.to('all_online_partners').emit('new_job_offer', offerPayload);
+    // 2. Broadcast to Category & City Room and Category ID Room
+    const categoryNameRoom = `category_${(categoryName || '').trim()}_${bookingCity.trim()}`;
+    const categoryIdRoom = `category_${categoryId}_${bookingCity.trim()}`;
+    
+    io.to(categoryNameRoom).to(categoryIdRoom).to('all_online_partners').emit('new_job_offer', offerPayload);
 
     return offerPayload;
   } catch (err) {

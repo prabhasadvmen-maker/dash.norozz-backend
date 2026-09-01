@@ -24,6 +24,11 @@ router.post('/:id/pay', payBookingRules, validate, bookingController.processPaym
 router.post('/:id/rate', rateBookingRules, validate, bookingController.rateBooking);
 router.patch('/:id/cancel', cancelBookingRules, validate, bookingController.cancelBooking);
 
+// Extra Services & Packages Lookup
+router.get('/services/:serviceId/packages', bookingController.getServicePackages);
+router.get('/:id/payable-amount', bookingController.calculatePayableAmount);
+router.post('/:id/verify-extra-payment', bookingController.verifyExtraPayment);
+
 // Partner & Admin Dispatch Status Transitions
 router.patch('/:id/assign', assignBookingRules, validate, bookingController.assignPartner);
 router.patch('/:id/accept', bookingController.acceptBooking);

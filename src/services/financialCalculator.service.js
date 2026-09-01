@@ -1,8 +1,9 @@
 import { CommissionRule } from '../models/commissionRule.model.js';
+import { SystemSettings } from '../models/systemSettings.model.js';
 
 export class FinancialCalculatorService {
   /**
-   * Find applicable active CommissionRule for a category or global default
+   * Find applicable active CommissionRule for a category or fetch global SystemSettings rates set by SuperAdmin
    */
   async getActiveRuleForCategory(categoryId = null) {
     let rule = null;
@@ -21,16 +22,20 @@ export class FinancialCalculatorService {
       }).sort({ createdAt: -1 });
     }
 
+    // Fetch live SuperAdmin Global Settings from MongoDB
+    let settings = await SystemSettings.findOne({ key: 'global_settings' });
+    const custFeePercent = (settings && typeof settings.customerPlatformFeePercent === 'number') ? settings.customerPlatformFeePercent : 5;
+    const partCommissionPercent = (settings && typeof settings.partnerPlatformFeePercent === 'number') ? settings.partnerPlatformFeePercent : 10;
+
     if (!rule) {
-      // Fallback default rule (5% Customer Fee, 5% Partner Commission)
       rule = {
         _id: null,
-        name: 'Default 5% Revenue Policy',
+        name: `Dynamic System Policy (${custFeePercent}% Cust / ${partCommissionPercent}% Partner)`,
         customerFeeType: 'percentage',
-        customerFeeValue: 5,
+        customerFeeValue: custFeePercent,
         customerFeeFixed: 0,
         partnerCommissionType: 'percentage',
-        partnerCommissionValue: 5,
+        partnerCommissionValue: partCommissionPercent,
         partnerCommissionFixed: 0,
       };
     }
@@ -39,7 +44,7 @@ export class FinancialCalculatorService {
   }
 
   /**
-   * Calculate full financial breakdown and snapshot
+   * Calculate full financial breakdown and snapshot using dynamic rates
    */
   async calculateBreakdown({
     servicePrice = 0,
@@ -72,7 +77,8 @@ export class FinancialCalculatorService {
       partnerCommission = Math.round(baseValue * (rule.partnerCommissionValue / 100)) + (rule.partnerCommissionFixed || 0);
     }
 
-    const customerPayable = baseValue + customerPlatformFee - (discountBearBy === 'NOROZZ' ? discountAmount : 0);
+    const discVal = Number(discountAmount || 0);
+    const customerPayable = Math.max(0, baseValue + customerPlatformFee - discVal);
     const partnerGrossEarning = baseValue;
     const partnerNetEarning = Math.max(0, partnerGrossEarning - partnerCommission);
     const norozzGrossRevenue = customerPlatformFee + partnerCommission;
@@ -82,7 +88,7 @@ export class FinancialCalculatorService {
       extraServicesPrice: Number(extraServicesPrice),
       customerPlatformFee,
       partnerCommission,
-      discountAmount: Number(discountAmount),
+      discountAmount: discVal,
       discountBearBy,
       customerPayable,
       partnerGrossEarning,

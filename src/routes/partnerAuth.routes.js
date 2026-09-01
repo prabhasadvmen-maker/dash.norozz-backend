@@ -29,15 +29,6 @@ router.post('/otp/verify', otpAuthRateLimiter, partnerOtpVerifyRules, validate, 
 router.post('/forgot-password', otpAuthRateLimiter, partnerForgotPasswordRules, validate, partnerAuthController.forgotPassword);
 router.post('/reset-password', otpAuthRateLimiter, partnerResetPasswordRules, validate, partnerAuthController.resetPassword);
 
-// Protected Partner Endpoints (Requires JWT Access Token)
-router.post('/logout', verifyJWT, partnerAuthController.logout);
-router.get('/kyc-status', verifyJWT, partnerAuthController.getKycStatus);
-router.put('/profile', verifyJWT, updatePartnerProfileRules, validate, partnerAuthController.updateProfile);
-router.post('/kyc-submit', verifyJWT, partnerAuthController.submitKycSetup);
-
-// Step-wise Dedicated Partner Onboarding Endpoints
-router.post('/onboarding/location', verifyJWT, partnerAuthController.saveOnboardingLocation);
-
 // Multi-file Upload for KYC Documents (Aadhaar, PAN, GST, Bank Passbook, Profile Image, Driving License, Photo)
 const kycDocUploadFields = upload.fields([
   { name: 'aadhaarDoc', maxCount: 1 },
@@ -51,6 +42,14 @@ const kycDocUploadFields = upload.fields([
   { name: 'profileImage', maxCount: 1 },
 ]);
 
+// Protected Partner Endpoints (Requires JWT Access Token)
+router.post('/logout', verifyJWT, partnerAuthController.logout);
+router.get('/kyc-status', verifyJWT, partnerAuthController.getKycStatus);
+router.put('/profile', verifyJWT, kycDocUploadFields, updatePartnerProfileRules, validate, partnerAuthController.updateProfile);
+router.post('/kyc-submit', verifyJWT, partnerAuthController.submitKycSetup);
+
+// Step-wise Dedicated Partner Onboarding Endpoints
+router.post('/onboarding/location', verifyJWT, partnerAuthController.saveOnboardingLocation);
 router.post('/onboarding/documents', verifyJWT, kycDocUploadFields, partnerAuthController.saveOnboardingDocuments);
 router.post('/upload-documents', verifyJWT, kycDocUploadFields, partnerAuthController.uploadDocuments);
 router.post('/onboarding/category', verifyJWT, onboardingCategoryRules, validate, partnerAuthController.saveOnboardingCategory);

@@ -13,6 +13,7 @@ import {
 } from '../validators/customerAuth.validator.js';
 import { validate } from '../validators/index.js';
 import { verifyJWT } from '../middleware/auth.middleware.js';
+import { upload } from '../middleware/upload.middleware.js';
 import { otpAuthRateLimiter } from '../middleware/rateLimiter.middleware.js';
 
 const router = Router();
@@ -29,7 +30,7 @@ router.post('/refresh-token', customerAuthController.refreshToken);
 // Protected Customer Endpoints (Requires JWT Access Token)
 router.post('/logout', verifyJWT, customerAuthController.logout);
 router.get('/profile', verifyJWT, customerAuthController.getProfile);
-router.put('/profile', verifyJWT, updateCustomerProfileRules, validate, customerAuthController.updateProfile);
+router.put('/profile', verifyJWT, upload.single('profileImage'), updateCustomerProfileRules, validate, customerAuthController.updateProfile);
 router.post('/secondary-otp/send', verifyJWT, customerAuthController.sendSecondaryOtp);
 router.post('/secondary-otp/verify', verifyJWT, customerAuthController.verifySecondaryOtp);
 

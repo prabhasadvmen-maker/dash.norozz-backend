@@ -171,6 +171,12 @@ const userSchema = new mongoose.Schema(
         ref: 'Skill',
       },
     ],
+    offeredServices: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Service',
+      },
+    ],
     certifications: {
       type: [String],
       default: [],
@@ -309,6 +315,13 @@ const userSchema = new mongoose.Schema(
 userSchema.pre('validate', function (next) {
   if (Array.isArray(this.skills)) {
     this.skills = this.skills.filter(
+      (s) =>
+        (typeof s === 'string' && Boolean(s.match(/^[0-9a-fA-F]{24}$/))) ||
+        (s && (s._id || s instanceof mongoose.Types.ObjectId))
+    );
+  }
+  if (Array.isArray(this.offeredServices)) {
+    this.offeredServices = this.offeredServices.filter(
       (s) =>
         (typeof s === 'string' && Boolean(s.match(/^[0-9a-fA-F]{24}$/))) ||
         (s && (s._id || s instanceof mongoose.Types.ObjectId))

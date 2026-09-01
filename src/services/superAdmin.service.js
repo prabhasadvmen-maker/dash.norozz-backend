@@ -246,47 +246,7 @@ export class SuperAdminService {
   // 5. COUPON MANAGEMENT SYSTEM (CRUD)
   async getAllCoupons() {
     const { Coupon } = await import('../models/coupon.model.js');
-    let coupons = await Coupon.find({}).sort({ createdAt: -1 });
-
-    // Seed default initial coupons if DB is empty
-    if (coupons.length === 0) {
-      await Coupon.insertMany([
-        {
-          code: 'FIRST30',
-          title: '30% Off on your first booking',
-          description: 'Valid on bookings above ₹1,000',
-          discountType: 'percentage',
-          discountValue: 30,
-          maxDiscountAmount: 300,
-          minBookingAmount: 1000,
-          usageLimitPerUser: 1,
-          isActive: true,
-        },
-        {
-          code: 'HOME50',
-          title: 'Flat ₹50 Off on Deep Cleaning',
-          description: 'Can be applied once per user',
-          discountType: 'fixed',
-          discountValue: 50,
-          minBookingAmount: 300,
-          usageLimitPerUser: 1,
-          isActive: true,
-        },
-        {
-          code: 'WEEKEND80',
-          title: 'Up to ₹80 Off on weekends',
-          description: 'Valid on Saturday & Sunday only',
-          discountType: 'fixed',
-          discountValue: 80,
-          minBookingAmount: 500,
-          usageLimitPerUser: 1,
-          isActive: true,
-        },
-      ]);
-      coupons = await Coupon.find({}).sort({ createdAt: -1 });
-    }
-
-    return coupons;
+    return await Coupon.find({}).sort({ createdAt: -1 });
   }
 
   async createCoupon(data) {
@@ -363,30 +323,53 @@ export class SuperAdminService {
     if (!settings) {
       settings = await SystemSettings.create({
         key: 'global_settings',
+        customerPlatformFeePercent: 5,
+        partnerPlatformFeePercent: 10,
         referralBonusAmount: 500,
         currency: 'INR',
       });
+    } else {
+      let updated = false;
+      if (settings.customerPlatformFeePercent === undefined || settings.customerPlatformFeePercent === null) {
+        settings.customerPlatformFeePercent = 5;
+        updated = true;
+      }
+      if (settings.partnerPlatformFeePercent === undefined || settings.partnerPlatformFeePercent === null) {
+        settings.partnerPlatformFeePercent = 10;
+        updated = true;
+      }
+      if (updated) {
+        await settings.save();
+      }
     }
     return settings;
   }
 
   async updateReferralSettings(data) {
     const { SystemSettings } = await import('../models/systemSettings.model.js');
-    let settings = await SystemSettings.findOne({ key: 'global_settings' });
-    if (!settings) {
-      settings = await SystemSettings.create({ key: 'global_settings', referralBonusAmount: 500 });
-    }
+    const update = {};
 
-    if (data.referralBonusAmount !== undefined) {
-      settings.referralBonusAmount = Number(data.referralBonusAmount);
+    if (data.customerPlatformFeePercent !== undefined && data.customerPlatformFeePercent !== '') {
+      update.customerPlatformFeePercent = Number(data.customerPlatformFeePercent);
+    }
+    if (data.partnerPlatformFeePercent !== undefined && data.partnerPlatformFeePercent !== '') {
+      update.partnerPlatformFeePercent = Number(data.partnerPlatformFeePercent);
+    }
+    if (data.referralBonusAmount !== undefined && data.referralBonusAmount !== '') {
+      update.referralBonusAmount = Number(data.referralBonusAmount);
     }
     if (data.currency !== undefined) {
-      settings.currency = data.currency;
+      update.currency = data.currency;
     }
 
-    await settings.save();
+    const settings = await SystemSettings.findOneAndUpdate(
+      { key: 'global_settings' },
+      { $set: update },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
     return {
-      message: 'Referral Bonus Settings updated successfully!',
+      message: 'Platform Settings & Commission Fees updated successfully!',
       settings,
     };
   }

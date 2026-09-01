@@ -5,10 +5,12 @@ export const createSkillRules = [
     .trim()
     .notEmpty()
     .withMessage('Skill Name is required'),
+  body('service')
+    .optional()
+    .isMongoId()
+    .withMessage('Invalid Service ID format'),
   body('category')
-    .trim()
-    .notEmpty()
-    .withMessage('Category ID is required for skill creation')
+    .optional()
     .isMongoId()
     .withMessage('Invalid Category ID format'),
 ];
@@ -22,6 +24,10 @@ export const updateSkillRules = [
     .trim()
     .notEmpty()
     .withMessage('Skill Name cannot be empty'),
+  body('service')
+    .optional()
+    .isMongoId()
+    .withMessage('Invalid Service ID format'),
   body('category')
     .optional()
     .isMongoId()

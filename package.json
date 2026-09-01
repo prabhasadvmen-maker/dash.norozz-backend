@@ -8,6 +8,8 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "seed": "node src/seed.js",
+    "seed:catalog": "node src/seed/norozzServiceSeed.js",
+    "seed:enriched": "node src/seed/norozzEnrichedServiceSeed.js",
     "seed:skills": "node src/database/seedSkills.js"
   },
   "dependencies": {

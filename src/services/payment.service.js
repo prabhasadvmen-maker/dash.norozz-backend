@@ -177,6 +177,7 @@ export class PaymentService {
 
     booking.paymentStatus = 'paid';
     booking.paymentMethod = 'Wallet';
+    booking.financialStatus = 'AMOUNT_HELD';
     await booking.save();
 
     return {

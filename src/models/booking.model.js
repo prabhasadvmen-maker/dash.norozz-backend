@@ -56,6 +56,10 @@ const bookingSchema = new mongoose.Schema(
       city: { type: String, required: true },
       state: { type: String, default: '' },
       pincode: { type: String, default: '' },
+      locationCoordinates: {
+        lat: { type: Number, default: null },
+        lng: { type: Number, default: null },
+      },
     },
     city: {
       type: String,
@@ -175,8 +179,15 @@ const bookingSchema = new mongoose.Schema(
     },
     extraServices: [
       {
-        name: { type: String, required: true },
-        price: { type: Number, required: true },
+        serviceId: { type: mongoose.Schema.Types.ObjectId, ref: 'Service', default: null },
+        packageId: { type: mongoose.Schema.Types.ObjectId, ref: 'ServicePackage', default: null },
+        serviceName: { type: String, required: true },
+        packageName: { type: String, default: '' },
+        name: { type: String, default: '' },
+        price: { type: Number, required: true, min: 0 },
+        paymentStatus: { type: String, enum: ['PAID', 'UNPAID'], default: 'UNPAID' },
+        paymentTxnId: { type: String, default: '' },
+        paidAt: { type: Date, default: null },
         addedAt: { type: Date, default: Date.now },
       },
     ],

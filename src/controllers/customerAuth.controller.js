@@ -80,7 +80,8 @@ export class CustomerAuthController extends BaseController {
   });
 
   updateProfile = asyncHandler(async (req, res) => {
-    const updated = await customerAuthService.updateProfile(req.user._id, req.body);
+    const file = req.file || req.files?.profileImage?.[0];
+    const updated = await customerAuthService.updateProfile(req.user._id, req.body, file);
     return this.sendSuccess(res, updated, 'Customer profile updated successfully');
   });
 

@@ -40,7 +40,8 @@ export class PartnerAuthController extends BaseController {
   });
 
   updateProfile = asyncHandler(async (req, res) => {
-    const result = await partnerAuthService.updateProfile(req.user._id, req.body);
+    const file = req.file || (req.files?.profileImage ? req.files.profileImage[0] : null);
+    const result = await partnerAuthService.updateProfile(req.user._id, req.body, file);
     return this.sendSuccess(res, result, 'Partner profile updated successfully');
   });
 

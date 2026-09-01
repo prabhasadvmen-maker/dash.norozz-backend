@@ -7,6 +7,14 @@ const systemSettingsSchema = new mongoose.Schema(
       default: 'global_settings',
       unique: true,
     },
+    customerPlatformFeePercent: {
+      type: Number,
+      default: 5,
+    },
+    partnerPlatformFeePercent: {
+      type: Number,
+      default: 10,
+    },
     referralBonusAmount: {
       type: Number,
       default: 200,

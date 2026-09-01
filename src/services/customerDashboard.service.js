@@ -60,44 +60,6 @@ export class CustomerDashboardService {
     const { Coupon } = await import('../models/coupon.model.js');
     let coupons = await Coupon.find({ isActive: true }).sort({ createdAt: -1 });
 
-    // Seed defaults if empty
-    if (coupons.length === 0) {
-      await Coupon.insertMany([
-        {
-          code: 'FIRST30',
-          title: '30% Off on your first booking',
-          description: 'Valid on bookings above ₹1,000',
-          discountType: 'percentage',
-          discountValue: 30,
-          maxDiscountAmount: 300,
-          minBookingAmount: 1000,
-          usageLimitPerUser: 1,
-          isActive: true,
-        },
-        {
-          code: 'HOME50',
-          title: 'Flat ₹50 Off on Deep Cleaning',
-          description: 'Can be applied once per user',
-          discountType: 'fixed',
-          discountValue: 50,
-          minBookingAmount: 300,
-          usageLimitPerUser: 1,
-          isActive: true,
-        },
-        {
-          code: 'WEEKEND80',
-          title: 'Up to ₹80 Off on weekends',
-          description: 'Valid on Saturday & Sunday only',
-          discountType: 'fixed',
-          discountValue: 80,
-          minBookingAmount: 500,
-          usageLimitPerUser: 1,
-          isActive: true,
-        },
-      ]);
-      coupons = await Coupon.find({ isActive: true }).sort({ createdAt: -1 });
-    }
-
     // Filter out coupons already used by this customer (if customer logged in)
     if (customer && customer._id) {
       const cIdStr = String(customer._id);
@@ -190,6 +152,42 @@ export class CustomerDashboardService {
       user.availableBalance = 0;
       user.withdrawableBalance = 0;
       await user.save();
+    }
+
+    // Auto-sync any refunded bookings without transaction log
+    try {
+      const { bookingRepository } = await import('../repositories/booking.repository.js');
+      const refundedBookings = await bookingRepository.model.find({
+        customer: customer._id,
+        $or: [{ status: 'Refunded' }, { status: 'refunded' }, { paymentStatus: 'refunded' }]
+      });
+
+      for (const b of refundedBookings) {
+        const existingTxn = await WalletTransaction.findOne({
+          user: customer._id,
+          category: 'Refund',
+          createdAt: { $gte: new Date(new Date(b.updatedAt || b.createdAt).getTime() - 120000) }
+        });
+
+        if (!existingTxn) {
+          const platformFee = b.financialSnapshot?.customerPlatformFee || 50;
+          const pkgAmount = b.refundAmount || b.financialSnapshot?.servicePrice || (b.packageSnapshot?.finalPrice || Math.max(0, (b.amount || 0) - platformFee));
+          const txnId = 'TXN-' + Math.floor(100000 + Math.random() * 900000);
+          await WalletTransaction.create({
+            transactionId: txnId,
+            user: customer._id,
+            type: 'Credit',
+            amount: pkgAmount,
+            category: 'Refund',
+            title: `Refund for Cancelled Service (${b.packageName || 'Service Package'})`,
+            paymentMethod: 'NOROZZ Wallet',
+            status: 'Completed',
+            createdAt: b.updatedAt || new Date(),
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Auto-sync refund transactions warning:', e);
     }
 
     // Fetch ONLY real customer wallet transactions
@@ -434,6 +432,20 @@ export class CustomerDashboardService {
       referralCode: user.referralCode,
       referral: newRef
     };
+  }
+
+  async getSystemSettings() {
+    let settings = await SystemSettings.findOne({ key: 'global_settings' });
+    if (!settings) {
+      settings = await SystemSettings.create({
+        key: 'global_settings',
+        customerPlatformFeePercent: 5,
+        partnerPlatformFeePercent: 10,
+        referralBonusAmount: 200,
+        currency: 'INR',
+      });
+    }
+    return settings;
   }
 }
 

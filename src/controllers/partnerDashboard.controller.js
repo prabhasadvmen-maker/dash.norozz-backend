@@ -20,6 +20,21 @@ export class PartnerDashboardController extends BaseController {
     return this.sendSuccess(res, result, result.message);
   });
 
+  getServicePackages = asyncHandler(async (req, res) => {
+    const packages = await bookingService.getServicePackages(req.params.serviceId);
+    return this.sendSuccess(res, packages, 'Service packages retrieved successfully');
+  });
+
+  calculatePayableAmount = asyncHandler(async (req, res) => {
+    const result = await bookingService.calculatePayableAmount(req.params.id);
+    return this.sendSuccess(res, result, 'Payable amount calculated successfully');
+  });
+
+  verifyExtraPayment = asyncHandler(async (req, res) => {
+    const result = await bookingService.verifyExtraPayment(req.params.id, req.body);
+    return this.sendSuccess(res, result, result.message);
+  });
+
   getDashboard = asyncHandler(async (req, res) => {
     const data = await partnerDashboardService.getDashboardOverview(req.user);
     return this.sendSuccess(res, data, 'Partner Dashboard overview retrieved successfully');

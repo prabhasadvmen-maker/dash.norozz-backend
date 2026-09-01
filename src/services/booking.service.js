@@ -105,6 +105,8 @@ export class BookingService {
     }
 
     try {
+      const isWalletMethod = String(bookingData.paymentMethod).toLowerCase().includes('wallet');
+
       const newBooking = await bookingRepository.create({
         bookingId,
         customer: customerUser._id,
@@ -115,21 +117,32 @@ export class BookingService {
         packageName: selectedPackage ? selectedPackage.title : (bookingData.packageName || service.name),
         packageSnapshot,
         address: {
-          title: bookingData.addressTitle || 'Home',
-          addressLine: bookingData.addressLine,
+          title: bookingData.addressTitle || bookingData.address?.title || 'Home',
+          addressLine: bookingData.addressLine || bookingData.address?.addressLine || '',
           city,
-          pincode: bookingData.pincode || '110001',
+          state: bookingData.state || bookingData.address?.state || '',
+          pincode: bookingData.pincode || bookingData.address?.pincode || '110001',
+          locationCoordinates: bookingData.locationCoordinates || bookingData.address?.locationCoordinates || {
+            lat: bookingData.lat || bookingData.latitude || 26.0494,
+            lng: bookingData.lng || bookingData.longitude || 83.0565,
+          },
         },
         city,
         bookingDate: bookingData.bookingDate || new Date(),
         timeSlot: bookingData.timeSlot || '04:30 PM - 05:30 PM',
         amount: financialSnapshot.customerPayable,
         paymentMethod: bookingData.paymentMethod || 'UPI',
-        paymentStatus: 'pending',
-        financialStatus: 'PAYMENT_PENDING',
+        paymentStatus: isWalletMethod ? 'paid' : 'pending',
+        financialStatus: isWalletMethod ? 'AMOUNT_HELD' : 'PAYMENT_PENDING',
         financialSnapshot,
         status: 'Pending',
       });
+
+      // If paymentMethod is Wallet, execute Wallet Payment process atomically
+      if (isWalletMethod) {
+        const { paymentService } = await import('./payment.service.js');
+        await paymentService.processWalletPayment(customerUser, newBooking._id, financialSnapshot.customerPayable);
+      }
 
       // Record Coupon Usage in MongoDB if promoCode/couponCode provided
       const usedCode = bookingData.couponCode || bookingData.promoCode || bookingData.appliedCouponCode;
@@ -306,24 +319,173 @@ export class BookingService {
     return { message: 'Service started successfully', status: 'Started', booking };
   }
 
-  // 6c. ADD EXTRA ADD-ON SERVICE
-  async addExtraService(bookingId, partnerUser, extraService) {
+  // 6c. FETCH PACKAGES FOR OFFERED SERVICE
+  async getServicePackages(serviceId) {
+    const service = await serviceRepository.findById(serviceId);
+    if (!service) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Service not found');
+    }
+
+    const packages = await servicePackageRepository.model
+      .find({ service: serviceId, status: 'active' })
+      .sort({ sortOrder: 1, createdAt: 1 });
+
+    // Fallback default package snapshot if no packages defined in DB
+    if (packages.length === 0) {
+      return [
+        {
+          _id: service._id,
+          service: service._id,
+          title: 'Standard Execution Package',
+          price: service.price || 0,
+          finalPrice: service.finalPrice || service.price || 0,
+          duration: service.duration || '45 mins',
+          features: ['Standard Service Execution', 'Sanitization & Cleanup', 'Quality Audit'],
+        },
+      ];
+    }
+
+    return packages;
+  }
+
+  // 6d. ADD EXTRA ADD-ON SERVICE WITH SERVER-SIDE VALIDATION & TRUSTED PRICING
+  async addExtraService(bookingId, partnerUser, payload = {}) {
     const booking = await bookingRepository.findById(bookingId);
     if (!booking || String(booking.partner) !== String(partnerUser._id)) {
       throw new ApiError(HTTP_STATUS.FORBIDDEN, 'You are not assigned to this booking');
     }
 
-    const { name, price } = extraService || {};
-    if (!name || !price) {
-      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Extra service name and price are required');
+    const { serviceId, packageId, name, price } = payload;
+    let targetService = null;
+    let targetPackage = null;
+
+    if (serviceId) {
+      targetService = await serviceRepository.findById(serviceId);
     }
 
+    // Fallback match by service name if serviceId is not passed
+    if (!targetService && name) {
+      targetService = await serviceRepository.model.findOne({
+        name: { $regex: new RegExp(`^${name.trim()}$`, 'i') },
+      });
+    }
+
+    if (!targetService) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Valid service not found');
+    }
+
+    // Validate service is in partner's offeredServices (if partner has offeredServices defined)
+    if (Array.isArray(partnerUser.offeredServices) && partnerUser.offeredServices.length > 0) {
+      const pOfferedIds = partnerUser.offeredServices.map((s) => String(s._id || s));
+      if (!pOfferedIds.includes(String(targetService._id))) {
+        throw new ApiError(HTTP_STATUS.BAD_REQUEST, `Service '${targetService.name}' is not part of your authorized offered services.`);
+      }
+    }
+
+    // Validate Package if packageId provided
+    if (packageId) {
+      targetPackage = await servicePackageRepository.findById(packageId);
+      if (!targetPackage || String(targetPackage.service) !== String(targetService._id)) {
+        throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Selected package does not belong to this service.');
+      }
+    }
+
+    // Calculate trusted price from database model (NEVER trust frontend price)
+    const trustedPrice = targetPackage
+      ? Number(targetPackage.finalPrice ?? targetPackage.price ?? 0)
+      : Number(targetService.finalPrice ?? targetService.price ?? (price || 150));
+
+    const finalServiceName = targetService.name;
+    const finalPackageName = targetPackage ? targetPackage.title : 'Standard Package';
+    const combinedItemName = `${finalServiceName}${targetPackage ? ` - ${targetPackage.title}` : ''}`;
+
     booking.extraServices = booking.extraServices || [];
-    booking.extraServices.push({ name, price: Number(price), addedAt: new Date() });
-    booking.amount = (booking.amount || 0) + Number(price);
+
+    // Duplicate check: Prevent adding duplicate unpaid package to same booking
+    const isDuplicate = booking.extraServices.some((item) => {
+      if (packageId && item.packageId) {
+        return String(item.packageId) === String(packageId) && item.paymentStatus !== 'PAID';
+      }
+      return String(item.serviceId) === String(targetService._id) && item.paymentStatus !== 'PAID';
+    });
+
+    if (isDuplicate) {
+      throw new ApiError(HTTP_STATUS.BAD_REQUEST, `Extra service '${combinedItemName}' is already added to this booking.`);
+    }
+
+    booking.extraServices.push({
+      serviceId: targetService._id,
+      packageId: targetPackage ? targetPackage._id : null,
+      serviceName: finalServiceName,
+      packageName: finalPackageName,
+      name: combinedItemName,
+      price: trustedPrice,
+      paymentStatus: 'UNPAID',
+      addedAt: new Date(),
+    });
+
     await booking.save();
 
-    return { message: `Added extra service '${name}' (+₹${price})`, amount: booking.amount, booking };
+    return {
+      message: `Added extra service '${combinedItemName}' (+₹${trustedPrice})`,
+      addedItem: booking.extraServices[booking.extraServices.length - 1],
+      booking,
+    };
+  }
+
+  // 6e. CALCULATE PAYABLE UNPAID AMOUNT (SERVER-SIDE SOURCE OF TRUTH)
+  async calculatePayableAmount(bookingId) {
+    const booking = await bookingRepository.findById(bookingId);
+    if (!booking) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Booking not found');
+    }
+
+    const extraServices = booking.extraServices || [];
+    const unpaidItems = extraServices.filter((item) => item.paymentStatus === 'UNPAID');
+    const payableAmount = unpaidItems.reduce((sum, item) => sum + Number(item.price || 0), 0);
+    const paidItems = extraServices.filter((item) => item.paymentStatus === 'PAID');
+
+    return {
+      bookingId: booking._id,
+      bookingNumber: booking.bookingId,
+      originalPaidAmount: booking.amount,
+      payableAmount,
+      unpaidItemsCount: unpaidItems.length,
+      unpaidItems,
+      paidItems,
+      allAlreadyPaid: payableAmount === 0,
+    };
+  }
+
+  // 6f. VERIFY & CONFIRM EXTRA PAYMENT (Mark Extra Line-Items PAID)
+  async verifyExtraPayment(bookingId, { paymentMethod = 'UPI', paymentTxnId }) {
+    const booking = await bookingRepository.findById(bookingId);
+    if (!booking) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Booking not found');
+    }
+
+    const txnId = paymentTxnId || `PAY-EXT-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    booking.extraServices = (booking.extraServices || []).map((item) => {
+      if (item.paymentStatus === 'UNPAID') {
+        return {
+          ...item.toObject(),
+          paymentStatus: 'PAID',
+          paymentTxnId: txnId,
+          paidAt: new Date(),
+        };
+      }
+      return item;
+    });
+
+    await booking.save();
+
+    return {
+      message: 'Extra payment verified successfully!',
+      payableAmount: 0,
+      paymentTxnId: txnId,
+      booking,
+    };
   }
 
   // 7. PARTNER COMPLETES JOB (Started -> Completed & Double-Entry Settlement)
@@ -331,6 +493,16 @@ export class BookingService {
     const booking = await bookingRepository.findById(bookingId);
     if (!booking || String(booking.partner) !== String(partnerUser._id)) {
       throw new ApiError(HTTP_STATUS.FORBIDDEN, 'You are not assigned to this booking');
+    }
+
+    // Guard: Enforce all extra services are PAID before completion
+    const unpaidItems = (booking.extraServices || []).filter((item) => item.paymentStatus === 'UNPAID');
+    if (unpaidItems.length > 0) {
+      const unpaidSum = unpaidItems.reduce((sum, item) => sum + Number(item.price || 0), 0);
+      throw new ApiError(
+        HTTP_STATUS.BAD_REQUEST,
+        `Cannot complete service. Unpaid extra services worth ₹${unpaidSum} require payment confirmation first.`
+      );
     }
 
     booking.status = 'Completed';
@@ -386,15 +558,52 @@ export class BookingService {
     }
 
     const isPaid = booking.paymentStatus === 'paid' || booking.paymentStatus === 'SUCCESS';
+
+    // Calculate Refund Amount: ONLY Package / Service Amount is refunded (Platform fee is non-refundable)
+    const platformFee = booking.financialSnapshot?.customerPlatformFee || 50;
+    const packageRefundAmount = booking.financialSnapshot?.servicePrice ||
+      (booking.packageSnapshot?.finalPrice || Math.max(0, (booking.amount || 0) - platformFee));
+
     booking.status = isPaid ? 'Refunded' : 'Cancelled';
     if (isPaid) booking.paymentStatus = 'refunded';
+    booking.financialStatus = 'REFUNDED';
     booking.cancellationReason = reason || 'Customer Cancellation';
+    booking.refundAmount = packageRefundAmount;
     await booking.save();
 
+    // Process Wallet Refund to Customer if Paid
+    if (isPaid && booking.customer) {
+      try {
+        const customerUser = await userRepository.findById(booking.customer);
+        if (customerUser) {
+          customerUser.walletBalance = (customerUser.walletBalance || 0) + packageRefundAmount;
+          await customerUser.save({ validateBeforeSave: false });
+
+          // Record Wallet Transaction Log Entry
+          const { WalletTransaction } = await import('../models/walletTransaction.model.js');
+          const txnId = 'TXN-' + Math.floor(100000 + Math.random() * 900000);
+          const pkgName = booking.packageName || 'Service Package';
+          await WalletTransaction.create({
+            transactionId: txnId,
+            user: customerUser._id,
+            type: 'Credit',
+            amount: packageRefundAmount,
+            category: 'Refund',
+            title: `Refund for Cancelled Service (${pkgName})`,
+            paymentMethod: 'NOROZZ Wallet',
+            status: 'Completed',
+          });
+        }
+      } catch (err) {
+        console.error('Wallet refund execution error:', err);
+      }
+    }
+
     return {
-      message: `Booking ${booking.status.toLowerCase()} successfully`,
+      message: `Booking ${booking.status.toLowerCase()} successfully. ₹${packageRefundAmount} refunded to your wallet.`,
       status: booking.status,
       paymentStatus: booking.paymentStatus,
+      refundAmount: packageRefundAmount,
       booking,
     };
   }

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { customerDashboardController } from '../controllers/customerDashboard.controller.js';
+import { bookingController } from '../controllers/booking.controller.js';
 import { toggleFavoriteRules } from '../validators/customerDashboard.validator.js';
 import { validate } from '../validators/index.js';
 import { verifyJWT } from '../middleware/auth.middleware.js';
@@ -29,15 +30,18 @@ router.get('/reviews', customerDashboardController.getReviews);
 // Favorite Services Bookmarks
 router.get('/favorites', customerDashboardController.getFavorites);
 router.post('/favorites', toggleFavoriteRules, validate, customerDashboardController.toggleFavorite);
-
 // Booking History & Filters
 router.get('/bookings/history', customerDashboardController.getBookingHistory);
 router.get('/bookings/upcoming', customerDashboardController.getUpcomingBookings);
 router.get('/bookings/completed', customerDashboardController.getCompletedBookings);
 router.get('/bookings/cancelled', customerDashboardController.getCancelledBookings);
+router.get('/bookings/:id', bookingController.getBookingById);
 
 // Referral System Endpoints
 router.get('/referral', customerDashboardController.getReferralData);
 router.post('/referral/invite', customerDashboardController.sendReferralInvite);
+
+// System Settings Endpoint
+router.get('/system-settings', customerDashboardController.getSystemSettings);
 
 export default router;

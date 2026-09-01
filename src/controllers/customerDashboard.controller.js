@@ -94,6 +94,11 @@ export class CustomerDashboardController extends BaseController {
     const result = await customerDashboardService.sendReferralInvite(req.user, req.body);
     return this.sendSuccess(res, result, result.message);
   });
+
+  getSystemSettings = asyncHandler(async (req, res) => {
+    const settings = await customerDashboardService.getSystemSettings();
+    return this.sendSuccess(res, settings, 'Global system settings retrieved successfully');
+  });
 }
 
 export const customerDashboardController = new CustomerDashboardController();

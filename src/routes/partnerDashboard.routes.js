@@ -28,6 +28,9 @@ router.get('/bookings/:id', partnerDashboardController.getBookingDetails);
 router.post('/bookings/:id/accept-job', partnerDashboardController.claimJobOffer);
 router.post('/bookings/:id/verify-otp', partnerDashboardController.verifyOtp);
 router.post('/bookings/:id/add-extra-service', partnerDashboardController.addExtraService);
+router.get('/services/:serviceId/packages', partnerDashboardController.getServicePackages);
+router.get('/bookings/:id/payable-amount', partnerDashboardController.calculatePayableAmount);
+router.post('/bookings/:id/verify-extra-payment', partnerDashboardController.verifyExtraPayment);
 
 // Wallet & Financials
 router.get('/wallet', partnerDashboardController.getWallet);

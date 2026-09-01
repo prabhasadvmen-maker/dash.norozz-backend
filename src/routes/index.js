@@ -20,6 +20,8 @@ import cityRoutes from './city.routes.js';
 import financialRoutes from './financial.routes.js';
 import reviewRoutes from './review.routes.js';
 import servicePackageRoutes from './servicePackage.routes.js';
+import translationRoutes from './translation.routes.js';
+import locationRoutes from './location.routes.js';
 
 const router = Router();
 
@@ -47,5 +49,7 @@ router.use('/wallet', financialRoutes);
 router.use('/admin', financialRoutes);
 router.use('/reviews', reviewRoutes);
 router.use('/admin/reviews', reviewRoutes);
+router.use('/translation', translationRoutes);
+router.use('/location', locationRoutes);
 
 export default router;

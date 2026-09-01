@@ -6,6 +6,7 @@ import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { ROLES } from '../constants/roles.constant.js';
 import { notificationService } from './notificationService.js';
 import { storageService } from './storage.service.js';
+import { r2StorageService } from './r2Storage.service.js';
 import { normalizePhoneNumber } from '../utils/phone.util.js';
 
 export class CustomerAuthService {
@@ -291,7 +292,7 @@ export class CustomerAuthService {
     return obj;
   }
 
-  async updateProfile(customerId, updateData) {
+  async updateProfile(customerId, updateData, file = null) {
     const allowedFields = ['name', 'email', 'phone', 'dob', 'gender', 'profileImage', 'city', 'state', 'country', 'address', 'isProfileCompleted', 'isEmailVerified', 'isPhoneVerified'];
     const sanitizedData = {};
 
@@ -305,9 +306,17 @@ export class CustomerAuthService {
       sanitizedData.isProfileCompleted = true;
     }
 
-    // Upload profile image to Cloudflare R2 if base64 data string is provided
-    if (sanitizedData.profileImage && sanitizedData.profileImage.startsWith('data:image')) {
-      sanitizedData.profileImage = await storageService.uploadBase64Image(sanitizedData.profileImage, 'norozz_customer_profiles');
+    // Upload profile image binary file to Cloudflare R2
+    if (file) {
+      const uploadRes = await r2StorageService.uploadFile(
+        file.buffer,
+        file.originalname || 'customer_profile.jpg',
+        file.mimetype || 'image/jpeg',
+        'norozz_customer_profiles'
+      );
+      sanitizedData.profileImage = uploadRes.url || uploadRes;
+    } else if (sanitizedData.profileImage && sanitizedData.profileImage.startsWith('data:image')) {
+      sanitizedData.profileImage = await r2StorageService.uploadBase64Image(sanitizedData.profileImage, 'norozz_customer_profiles');
     }
 
     // Check duplicate email across accounts
