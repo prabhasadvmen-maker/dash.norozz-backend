@@ -165,12 +165,6 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: '3-5 Years',
     },
-    skills: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Skill',
-      },
-    ],
     offeredServices: [
       {
         type: mongoose.Schema.Types.ObjectId,
@@ -212,6 +206,78 @@ const userSchema = new mongoose.Schema(
         closeTime: { type: String, default: '07:00 PM' },
       },
     ],
+    kyc: {
+      overallStatus: {
+        type: String,
+        enum: ['PENDING', 'IN_PROGRESS', 'VERIFIED', 'FAILED'],
+        default: 'PENDING',
+      },
+      approvalStatus: {
+        type: String,
+        enum: ['PENDING_ADMIN_REVIEW', 'APPROVED', 'REJECTED'],
+        default: 'PENDING_ADMIN_REVIEW',
+      },
+      adminReviewedAt: { type: Date, default: null },
+      adminReviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+      rejectionReason: { type: String, default: '' },
+      manualOverride: { type: Boolean, default: false },
+      overrideReason: { type: String, default: '' },
+
+      mobile: {
+        status: { type: String, enum: ['PENDING', 'VERIFYING', 'VERIFIED', 'FAILED', 'EXPIRED'], default: 'PENDING' },
+        verified: { type: Boolean, default: false },
+        verifiedAt: { type: Date, default: null },
+        referenceId: { type: String, default: '' },
+      },
+      pan: {
+        status: { type: String, enum: ['PENDING', 'VERIFYING', 'VERIFIED', 'FAILED', 'EXPIRED'], default: 'PENDING' },
+        verified: { type: Boolean, default: false },
+        verifiedAt: { type: Date, default: null },
+        referenceId: { type: String, default: '' },
+        panNumber: { type: String, default: '' },
+      },
+      aadhaar: {
+        status: { type: String, enum: ['PENDING', 'VERIFYING', 'VERIFIED', 'FAILED', 'EXPIRED'], default: 'PENDING' },
+        verified: { type: Boolean, default: false },
+        verifiedAt: { type: Date, default: null },
+        referenceId: { type: String, default: '' },
+      },
+      drivingLicense: {
+        status: { type: String, enum: ['PENDING', 'VERIFYING', 'VERIFIED', 'FAILED', 'EXPIRED'], default: 'PENDING' },
+        verified: { type: Boolean, default: false },
+        verifiedAt: { type: Date, default: null },
+        referenceId: { type: String, default: '' },
+      },
+      bankAccount: {
+        status: { type: String, enum: ['PENDING', 'VERIFYING', 'VERIFIED', 'FAILED', 'EXPIRED'], default: 'PENDING' },
+        verified: { type: Boolean, default: false },
+        verifiedAt: { type: Date, default: null },
+        referenceId: { type: String, default: '' },
+      },
+      faceMatch: {
+        status: { type: String, enum: ['PENDING', 'VERIFYING', 'VERIFIED', 'FAILED', 'EXPIRED'], default: 'PENDING' },
+        verified: { type: Boolean, default: false },
+        score: { type: Number, default: null },
+        verifiedAt: { type: Date, default: null },
+      },
+      faceLiveness: {
+        status: { type: String, enum: ['PENDING', 'VERIFYING', 'VERIFIED', 'FAILED', 'EXPIRED'], default: 'PENDING' },
+        verified: { type: Boolean, default: false },
+        verifiedAt: { type: Date, default: null },
+      },
+      digilocker: {
+        requestId: { type: String, default: null },
+        securityKey: { type: String, default: null },
+        status: { type: String, enum: ['PENDING', 'VERIFYING', 'VERIFIED', 'FAILED', 'EXPIRED'], default: 'PENDING' },
+        initializedAt: { type: Date, default: null },
+        completedAt: { type: Date, default: null },
+        docStatuses: {
+          ADHAR: { type: String, default: 'PENDING' },
+          PANCR: { type: String, default: 'PENDING' },
+          DRVLC: { type: String, default: 'PENDING' },
+        },
+      },
+    },
     documents: {
       aadhaarDoc: { type: String, default: '' },
       aadhaarFront: { type: String, default: '' },
@@ -313,13 +379,6 @@ const userSchema = new mongoose.Schema(
  * Pre-Validate Middleware to automatically filter out non-ObjectId skill strings
  */
 userSchema.pre('validate', function (next) {
-  if (Array.isArray(this.skills)) {
-    this.skills = this.skills.filter(
-      (s) =>
-        (typeof s === 'string' && Boolean(s.match(/^[0-9a-fA-F]{24}$/))) ||
-        (s && (s._id || s instanceof mongoose.Types.ObjectId))
-    );
-  }
   if (Array.isArray(this.offeredServices)) {
     this.offeredServices = this.offeredServices.filter(
       (s) =>

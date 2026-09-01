@@ -132,6 +132,19 @@ export class CityAdminService {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found');
     }
 
+    const overallStatus = partner.kyc?.overallStatus || 'PENDING';
+    const isOverride = partner.kyc?.manualOverride === true;
+
+    if (overallStatus !== 'VERIFIED' && !isOverride) {
+      throw new ApiError(
+        HTTP_STATUS.BAD_REQUEST,
+        `Cannot approve Partner '${partner.name}'. Automated ZOOP KYC status is currently '${overallStatus}'. All mandatory checks (Mobile, PAN, DigiLocker/Aadhaar, DL, Bank, Face Match, Liveness) must be VERIFIED first before City Admin approval.`
+      );
+    }
+
+    if (!partner.kyc) partner.kyc = {};
+    partner.kyc.approvalStatus = 'APPROVED';
+    partner.kyc.adminReviewedAt = new Date();
     partner.kycStatus = 'approved';
     partner.status = 'active';
     partner.isKycSubmitted = true;
@@ -144,9 +157,19 @@ export class CityAdminService {
     partner.isSkillsUpdated = true;
     partner.isServiceAreaSet = true;
     partner.isWorkingHoursSet = true;
+    partner.markModified('kyc');
     await partner.save();
 
-    return { message: `Partner '${partner.name}' (${partner.agencyName}) approved successfully`, partner };
+    const { KycAuditService } = await import('./kyc/kycAudit.service.js');
+    await KycAuditService.logEvent({
+      partnerId: partner._id,
+      actorRole: 'CITY_ADMIN',
+      action: 'ADMIN_PARTNER_APPROVED',
+      status: 'APPROVED',
+      reason: isOverride ? `Approved via Manual Override: ${partner.kyc.overrideReason}` : 'Approved after successful ZOOP KYC verification',
+    });
+
+    return { message: `Partner '${partner.name}' (${partner.agencyName}) approved and activated successfully`, partner };
   }
 
   async rejectPartner(partnerId, reason, assignedCity) {
@@ -155,10 +178,24 @@ export class CityAdminService {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found');
     }
 
+    if (!partner.kyc) partner.kyc = {};
+    partner.kyc.approvalStatus = 'REJECTED';
+    partner.kyc.rejectionReason = reason || 'KYC document verification failed';
+    partner.kyc.adminReviewedAt = new Date();
     partner.kycStatus = 'rejected';
+    partner.markModified('kyc');
     await partner.save();
 
-    return { message: `Partner '${partner.name}' KYC rejected: ${reason}`, partner };
+    const { KycAuditService } = await import('./kyc/kycAudit.service.js');
+    await KycAuditService.logEvent({
+      partnerId: partner._id,
+      actorRole: 'CITY_ADMIN',
+      action: 'ADMIN_PARTNER_REJECTED',
+      status: 'REJECTED',
+      reason: partner.kyc.rejectionReason,
+    });
+
+    return { message: `Partner '${partner.name}' KYC application rejected: ${reason}`, partner };
   }
 
   async updateDocumentStatus(partnerId, docKey, status, rejectionReason, assignedCity) {

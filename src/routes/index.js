@@ -15,17 +15,18 @@ import autoAssignmentRoutes from './autoAssignment.routes.js';
 import paymentRoutes from './payment.routes.js';
 import mediaRoutes from './media.routes.js';
 import chatRoutes from './chat.routes.js';
-import skillRoutes from './skill.routes.js';
 import cityRoutes from './city.routes.js';
 import financialRoutes from './financial.routes.js';
 import reviewRoutes from './review.routes.js';
 import servicePackageRoutes from './servicePackage.routes.js';
 import translationRoutes from './translation.routes.js';
 import locationRoutes from './location.routes.js';
+import kycRoutes from './kyc.routes.js';
 
 const router = Router();
 
 router.use('/health', healthRoutes);
+router.use('/kyc', kycRoutes);
 router.use('/auth', authRoutes);
 router.use('/super-admin', superAdminRoutes);
 router.use('/city-admin', cityAdminRoutes);
@@ -34,7 +35,6 @@ router.use('/partner', partnerDashboardRoutes);
 router.use('/customer/auth', customerAuthRoutes);
 router.use('/customer', customerDashboardRoutes);
 router.use('/categories', categoryRoutes);
-router.use('/skills', skillRoutes);
 router.use('/sub-categories', subCategoryRoutes);
 router.use('/services', serviceRoutes);
 router.use('/packages', servicePackageRoutes);

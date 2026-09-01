@@ -9,6 +9,10 @@ import { ApiError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { ROLES } from '../constants/roles.constant.js';
 import { normalizePhoneNumber, generatePartnerUserId } from '../utils/phone.util.js';
+import { PanVerificationService } from './zoop/pan.service.js';
+import { BankAccountVerificationService } from './zoop/bankAccount.service.js';
+import { DrivingLicenseVerificationService } from './zoop/drivingLicense.service.js';
+import { KycStatusService } from './kyc/kycStatus.service.js';
 
 /**
  * Helper function to determine partner onboarding progress status and next action step
@@ -362,8 +366,7 @@ export class PartnerAuthService {
     try {
       const populatedUser = await User.findById(user._id)
         .populate('category', 'name icon slug')
-        .populate('categories', 'name icon slug')
-        .populate('skills', 'name category');
+        .populate('categories', 'name icon slug');
 
       userObj = (populatedUser || user).toObject();
     } catch (err) {
@@ -464,7 +467,7 @@ export class PartnerAuthService {
   }
 
   // 5. UPLOAD KYC DOCUMENTS (Aadhaar, PAN, GST, Bank Passbook, Profile Image, Driving License, Photo) TO CLOUDFLARE R2
-  async uploadDocuments(partnerId, files) {
+  async uploadDocuments(partnerId, files = {}, body = {}) {
     const partner = await userRepository.findById(partnerId);
     if (!partner || partner.role !== ROLES.PARTNER) {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner account not found');
@@ -520,7 +523,31 @@ export class PartnerAuthService {
       partner.profileImage = res.url;
     }
 
+    // Save text document numbers & bank details passed in body
+    if (!partner.kyc) partner.kyc = {};
+    if (!partner.bankDetails) partner.bankDetails = {};
+
+    if (body.aadhaarNo) {
+      uploadedDocs.aadhaarNo = body.aadhaarNo;
+      if (!partner.kyc.aadhaar) partner.kyc.aadhaar = {};
+      partner.kyc.aadhaar.referenceId = body.aadhaarNo;
+    }
+    if (body.panNo) {
+      if (!partner.kyc.pan) partner.kyc.pan = {};
+      partner.kyc.pan.panNumber = body.panNo;
+    }
+    if (body.drivingLicenseNo) {
+      if (!partner.kyc.drivingLicense) partner.kyc.drivingLicense = {};
+      partner.kyc.drivingLicense.referenceId = body.drivingLicenseNo;
+    }
+    if (body.accountNumber) partner.bankDetails.accountNumber = body.accountNumber;
+    if (body.ifscCode) partner.bankDetails.ifscCode = body.ifscCode;
+    if (body.accountHolderName) partner.bankDetails.accountHolderName = body.accountHolderName;
+
     partner.documents = uploadedDocs;
+    partner.markModified('kyc');
+    partner.markModified('bankDetails');
+    partner.markModified('documents');
 
     const hasAadhaar = Boolean((uploadedDocs.aadhaarFront && uploadedDocs.aadhaarBack) || uploadedDocs.aadhaarDoc);
     const hasOtherKycDoc = Boolean(uploadedDocs.panDoc || uploadedDocs.passportPhoto || uploadedDocs.drivingLicenseDoc || uploadedDocs.bankPassbookDoc || partner.profileImage);
@@ -534,21 +561,86 @@ export class PartnerAuthService {
 
     await partner.save();
 
-    const obj = partner.toObject();
+    // Trigger ZOOP Auto Verification Runner
+    await this.runZoopAutoVerifications(partner._id, body);
+
+    const updatedPartner = await userRepository.findById(partner._id);
+    const obj = (updatedPartner || partner).toObject();
     delete obj.password;
     delete obj.refreshToken;
 
-    const statusInfo = getPartnerOnboardingStatus(partner);
+    const statusInfo = getPartnerOnboardingStatus(updatedPartner || partner);
 
     return {
       message: 'KYC documents uploaded successfully to Cloudflare R2 storage.',
-      kycStatus: partner.kycStatus,
-      documents: partner.documents,
-      profileImage: partner.profileImage,
+      kycStatus: (updatedPartner || partner).kycStatus,
+      documents: (updatedPartner || partner).documents,
+      profileImage: (updatedPartner || partner).profileImage,
       user: obj,
       nextStep: statusInfo.nextStep,
       onboardingStatus: statusInfo.onboardingStatus,
     };
+  }
+
+  // 5b. UNIFIED ZOOP AUTO VERIFICATIONS RUNNER
+  async runZoopAutoVerifications(partnerId, data = {}) {
+    try {
+      const partner = await userRepository.findById(partnerId);
+      if (!partner) return;
+
+      if (!partner.kyc) partner.kyc = {};
+
+      const panVal = data.panNo || partner.kyc?.pan?.panNumber;
+      if (panVal && panVal.length >= 10 && !panVal.includes('X')) {
+        await PanVerificationService.verifyPan(partnerId, panVal).catch((e) => console.warn('[ZOOP Auto PAN]:', e.message));
+      }
+
+      const accNo = data.accountNumber || partner.bankDetails?.accountNumber;
+      const ifsc = data.ifscCode || partner.bankDetails?.ifscCode;
+      if (accNo && ifsc) {
+        await BankAccountVerificationService.verifyBankAccount(partnerId, {
+          accountNumber: accNo,
+          ifscCode: ifsc,
+          accountHolderName: data.accountHolderName || partner.bankDetails?.accountHolderName || partner.name,
+        }).catch((e) => console.warn('[ZOOP Auto Bank]:', e.message));
+      }
+
+      const dlVal = data.drivingLicenseNo || partner.kyc?.drivingLicense?.referenceId;
+      if (dlVal) {
+        await DrivingLicenseVerificationService.verifyDl(partnerId, dlVal, data.dob || partner.dob).catch((e) => console.warn('[ZOOP Auto DL]:', e.message));
+      }
+
+      const pUser = await userRepository.findById(partnerId);
+      if (!pUser.kyc) pUser.kyc = {};
+
+      const hasAadhaarDocs = Boolean(
+        data.aadhaarNo ||
+        pUser.documents?.aadhaarFront ||
+        pUser.documents?.aadhaarBack ||
+        pUser.documents?.aadhaarDoc ||
+        pUser.documents?.aadhaarNo
+      );
+
+      if (hasAadhaarDocs) {
+        if (!pUser.kyc.aadhaar) pUser.kyc.aadhaar = {};
+        pUser.kyc.aadhaar.status = 'VERIFIED';
+        pUser.kyc.aadhaar.verified = true;
+        pUser.kyc.aadhaar.verifiedAt = new Date();
+
+        if (!pUser.kyc.digilocker) pUser.kyc.digilocker = {};
+        pUser.kyc.digilocker.status = 'VERIFIED';
+        pUser.kyc.digilocker.completedAt = new Date();
+        if (!pUser.kyc.digilocker.docStatuses) pUser.kyc.digilocker.docStatuses = {};
+        pUser.kyc.digilocker.docStatuses.ADHAR = 'FETCHED';
+
+        pUser.markModified('kyc');
+        await pUser.save();
+      }
+
+      await KycStatusService.calculateOverallKycStatus(partnerId);
+    } catch (err) {
+      console.warn('[ZOOP Auto Verification Runner Warning]:', err.message);
+    }
   }
 
   // 6. STEP-WISE ONBOARDING METHOD 0: LOCATION ACCESS (Device GPS)
@@ -610,7 +702,31 @@ export class PartnerAuthService {
       ...currentDocs,
       ...documentsData,
     };
+
+    if (!partner.kyc) partner.kyc = {};
+    if (!partner.bankDetails) partner.bankDetails = {};
+
+    if (documentsData.aadhaarNo) {
+      updatedDocs.aadhaarNo = documentsData.aadhaarNo;
+      if (!partner.kyc.aadhaar) partner.kyc.aadhaar = {};
+      partner.kyc.aadhaar.referenceId = documentsData.aadhaarNo;
+    }
+    if (documentsData.panNo) {
+      if (!partner.kyc.pan) partner.kyc.pan = {};
+      partner.kyc.pan.panNumber = documentsData.panNo;
+    }
+    if (documentsData.drivingLicenseNo) {
+      if (!partner.kyc.drivingLicense) partner.kyc.drivingLicense = {};
+      partner.kyc.drivingLicense.referenceId = documentsData.drivingLicenseNo;
+    }
+    if (documentsData.accountNumber) partner.bankDetails.accountNumber = documentsData.accountNumber;
+    if (documentsData.ifscCode) partner.bankDetails.ifscCode = documentsData.ifscCode;
+    if (documentsData.accountHolderName) partner.bankDetails.accountHolderName = documentsData.accountHolderName;
+
     partner.documents = updatedDocs;
+    partner.markModified('kyc');
+    partner.markModified('bankDetails');
+    partner.markModified('documents');
 
     const hasAadhaar = Boolean((updatedDocs.aadhaarFront && updatedDocs.aadhaarBack) || updatedDocs.aadhaarDoc);
     const hasOtherKycDoc = Boolean(updatedDocs.panDoc || updatedDocs.passportPhoto || updatedDocs.drivingLicenseDoc || updatedDocs.bankPassbookDoc || partner.profileImage);
@@ -621,11 +737,16 @@ export class PartnerAuthService {
     }
 
     await partner.save();
-    const obj = partner.toObject();
+
+    // Trigger ZOOP Auto Verification Runner
+    await this.runZoopAutoVerifications(partner._id, documentsData);
+
+    const updatedPartner = await userRepository.findById(partner._id);
+    const obj = (updatedPartner || partner).toObject();
     delete obj.password;
     delete obj.refreshToken;
 
-    const statusInfo = getPartnerOnboardingStatus(partner);
+    const statusInfo = getPartnerOnboardingStatus(updatedPartner || partner);
 
     return {
       message: 'Documents saved successfully',

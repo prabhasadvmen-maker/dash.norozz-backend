@@ -75,7 +75,7 @@ export class PartnerAuthController extends BaseController {
 
   saveOnboardingDocuments = asyncHandler(async (req, res) => {
     if (req.files && Object.keys(req.files).length > 0) {
-      const result = await partnerAuthService.uploadDocuments(req.user._id, req.files);
+      const result = await partnerAuthService.uploadDocuments(req.user._id, req.files, req.body);
       return this.sendSuccess(res, result, result.message);
     }
     const result = await partnerAuthService.saveOnboardingDocuments(req.user._id, req.body.documents || req.body);

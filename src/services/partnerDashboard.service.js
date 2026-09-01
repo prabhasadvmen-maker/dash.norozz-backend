@@ -451,10 +451,7 @@ export class PartnerDashboardService {
   async getProfile(partner) {
     const p = await userRepository.model
       .findById(partner._id)
-      .populate('category', 'name slug image')
-      .populate('categories', 'name slug image')
-      .populate('offeredServices', 'name title slug')
-      .populate('skills', 'name slug');
+      .populate('offeredServices', 'name title slug');
     if (!p) {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner profile not found');
     }
