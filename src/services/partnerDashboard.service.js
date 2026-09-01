@@ -49,9 +49,12 @@ export class PartnerDashboardService {
       };
     }
 
+    // Helper query to match partner by ObjectId or String ID
+    const partnerFilter = { $or: [{ partner: partner._id }, { partner: String(partner._id) }] };
+
     // If Approved Partner: Fetch real booking stats
     const partnerBookings = await bookingRepository.model
-      .find({ partner: partner._id })
+      .find(partnerFilter)
       .populate('category', 'name slug image')
       .populate('service', 'name slug price finalPrice duration')
       .populate('customer', 'name email phone')
@@ -59,7 +62,32 @@ export class PartnerDashboardService {
 
     const todaysJobs = partnerBookings.filter(b => ['Assigned', 'Accepted', 'On The Way', 'Started', 'assigned', 'accepted', 'in_progress'].includes(b.status)).length;
     const pendingJobs = partnerBookings.filter(b => ['Pending', 'pending'].includes(b.status)).length;
-    const completedJobs = partnerBookings.filter(b => ['Completed', 'completed'].includes(b.status)).length;
+    const completedBookingsList = partnerBookings.filter(b => ['Completed', 'completed'].includes(b.status));
+    const completedJobs = completedBookingsList.length;
+
+    const realNetEarnings = completedBookingsList.reduce((sum, b) => {
+      const snapshot = b.financialSnapshot || {};
+      const net = snapshot.partnerNetEarning ?? (b.amount ? (b.amount - Math.round(b.amount * 0.10)) : 359);
+      return sum + net;
+    }, 0);
+
+    const activeWalletBalance = (partner?.walletBalance && partner.walletBalance > 0)
+      ? partner.walletBalance
+      : ((partner?.availableBalance && partner.availableBalance > 0)
+          ? partner.availableBalance
+          : realNetEarnings);
+
+    const activeLifetimeEarnings = (partner?.lifetimeEarnings && partner.lifetimeEarnings > 0)
+      ? partner.lifetimeEarnings
+      : realNetEarnings;
+
+    // Auto sync partner wallet on User document if 0 or un-synced
+    if (partner && (partner.walletBalance === 0 || !partner.walletBalance) && realNetEarnings > 0) {
+      partner.walletBalance = realNetEarnings;
+      partner.availableBalance = realNetEarnings;
+      partner.lifetimeEarnings = activeLifetimeEarnings;
+      await partner.save().catch(() => {});
+    }
 
     return {
       noticeMessage: 'Account Active & Operational',
@@ -69,8 +97,8 @@ export class PartnerDashboardService {
         todaysJobs: todaysJobs,
         pendingJobs: pendingJobs,
         completedJobs: completedJobs,
-        walletBalance: partner?.walletBalance || partner?.availableBalance || 0,
-        monthlyEarnings: partner?.lifetimeEarnings || 0,
+        walletBalance: activeWalletBalance,
+        monthlyEarnings: activeLifetimeEarnings,
         rating: partner?.averageRating ? partner.averageRating.toFixed(1) : '5.0',
         activeWorkers: 1,
       },
@@ -83,7 +111,7 @@ export class PartnerDashboardService {
     this.checkKycApproved(partner);
     return await bookingRepository.model
       .find({
-        partner: partner._id,
+        $or: [{ partner: partner._id }, { partner: String(partner._id) }],
         status: { $in: ['Assigned', 'Accepted', 'On The Way', 'Started', 'assigned', 'accepted', 'in_progress'] },
       })
       .populate('category', 'name slug image')
@@ -140,7 +168,7 @@ export class PartnerDashboardService {
     this.checkKycApproved(partner);
     return await bookingRepository.model
       .find({
-        partner: partner._id,
+        $or: [{ partner: partner._id }, { partner: String(partner._id) }],
         status: { $in: ['Completed', 'completed'] },
       })
       .populate('category', 'name slug image')
@@ -153,7 +181,7 @@ export class PartnerDashboardService {
     this.checkKycApproved(partner);
     return await bookingRepository.model
       .find({
-        partner: partner._id,
+        $or: [{ partner: partner._id }, { partner: String(partner._id) }],
         status: { $in: ['Cancelled', 'Refunded', 'cancelled'] },
       })
       .populate('category', 'name slug image')
@@ -168,7 +196,7 @@ export class PartnerDashboardService {
     // Return ONLY this partner's own claimed / assigned bookings
     return await bookingRepository.model
       .find({
-        partner: partner._id,
+        $or: [{ partner: partner._id }, { partner: String(partner._id) }],
       })
       .populate('category', 'name slug image')
       .populate('service', 'name slug price finalPrice duration')
@@ -183,6 +211,7 @@ export class PartnerDashboardService {
         _id: bookingId,
         $or: [
           { partner: partner._id },
+          { partner: String(partner._id) },
           { partner: null, status: { $in: ['Pending', 'pending'] } },
         ],
       })
@@ -225,25 +254,31 @@ export class PartnerDashboardService {
     const transactions = await WalletTransaction.find({ partnerId: partner._id }).sort({ createdAt: -1 });
 
     const completedBookings = await bookingRepository.model.find({
-      partner: partner._id,
+      $or: [{ partner: partner._id }, { partner: String(partner._id) }],
       status: { $in: ['Completed', 'completed'] },
     });
 
     const realLifetimeEarned = completedBookings.reduce(
-      (sum, b) => sum + (b.totalAmount || b.amount || b.finalPrice || 0),
+      (sum, b) => {
+        const snapshot = b.financialSnapshot || {};
+        const net = snapshot.partnerNetEarning ?? (b.amount ? (b.amount - Math.round(b.amount * 0.10)) : 359);
+        return sum + net;
+      },
       0
     );
 
-    // Auto-clean legacy unverified 13209 or 12450 default balance on User document to real lifetime earnings
-    if (p && (p.walletBalance === 13209 || p.walletBalance === 12450 || p.availableBalance === 12450 || p.availableBalance === 13209)) {
+    // Auto-clean legacy unverified balance or 0 balance when completed jobs exist
+    if (p && (p.walletBalance === 0 || !p.walletBalance || p.walletBalance === 13209 || p.walletBalance === 12450) && realLifetimeEarned > 0) {
       p.walletBalance = realLifetimeEarned;
       p.availableBalance = realLifetimeEarned;
       p.withdrawableBalance = realLifetimeEarned;
       p.lifetimeEarnings = realLifetimeEarned;
-      await p.save();
+      await p.save().catch(() => {});
     }
 
-    const currentBal = (p?.walletBalance === 13209 || p?.walletBalance === 12450) ? realLifetimeEarned : (p?.walletBalance ?? realLifetimeEarned);
+    const currentBal = (p?.walletBalance && p.walletBalance > 0 && p.walletBalance !== 13209 && p.walletBalance !== 12450)
+      ? p.walletBalance
+      : realLifetimeEarned;
 
     return {
       partnerId: partner._id,
@@ -262,7 +297,7 @@ export class PartnerDashboardService {
     // Query real completed bookings from MongoDB
     const completedBookings = await bookingRepository.model
       .find({
-        partner: partner._id,
+        $or: [{ partner: partner._id }, { partner: String(partner._id) }],
         status: { $in: ['Completed', 'completed'] },
       })
       .populate('customer', 'name email phone')
