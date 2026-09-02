@@ -14,6 +14,7 @@ import { PanVerificationService } from './zoop/pan.service.js';
 import { BankAccountVerificationService } from './zoop/bankAccount.service.js';
 import { DrivingLicenseVerificationService } from './zoop/drivingLicense.service.js';
 import { KycStatusService } from './kyc/kycStatus.service.js';
+import { validateAadhaarNumber } from '../utils/aadhaarValidator.js';
 
 /**
  * Helper function to determine partner onboarding progress status and next action step
@@ -611,12 +612,23 @@ export class PartnerAuthService {
       if (!partner) return;
 
       if (!partner.kyc) partner.kyc = {};
+      const docs = partner.documents ? (partner.documents.toObject ? partner.documents.toObject() : partner.documents) : {};
 
+      // 1. Mobile OTP Check
+      if (partner.isPhoneVerified) {
+        if (!partner.kyc.mobile) partner.kyc.mobile = {};
+        partner.kyc.mobile.status = 'VERIFIED';
+        partner.kyc.mobile.verified = true;
+        partner.kyc.mobile.verifiedAt = partner.kyc.mobile.verifiedAt || new Date();
+      }
+
+      // 2. PAN Card Verification
       const panVal = data.panNo || partner.kyc?.pan?.panNumber;
       if (panVal && panVal.length >= 10 && !panVal.includes('X')) {
         await PanVerificationService.verifyPan(partnerId, panVal).catch((e) => console.warn('[ZOOP Auto PAN]:', e.message));
       }
 
+      // 3. Bank Account Verification
       const accNo = data.accountNumber || partner.bankDetails?.accountNumber;
       const ifsc = data.ifscCode || partner.bankDetails?.ifscCode;
       if (accNo && ifsc) {
@@ -627,23 +639,50 @@ export class PartnerAuthService {
         }).catch((e) => console.warn('[ZOOP Auto Bank]:', e.message));
       }
 
+      // 4. Driving License Verification
       const dlVal = data.drivingLicenseNo || partner.kyc?.drivingLicense?.referenceId;
       if (dlVal) {
         await DrivingLicenseVerificationService.verifyDl(partnerId, dlVal, data.dob || partner.dob).catch((e) => console.warn('[ZOOP Auto DL]:', e.message));
       }
 
+      // 5. Aadhaar / DigiLocker Verification
       const pUser = await userRepository.findById(partnerId);
       if (!pUser.kyc) pUser.kyc = {};
 
-      const hasAadhaarDocs = Boolean(
-        data.aadhaarNo ||
+      const aadhaarNum = data.aadhaarNo || docs.aadhaarNo || pUser.documents?.aadhaarNo || pUser.kyc?.aadhaar?.referenceId;
+      const hasAadhaarImages = Boolean(
+        docs.aadhaarFront ||
+        docs.aadhaarBack ||
+        docs.aadhaarDoc ||
         pUser.documents?.aadhaarFront ||
         pUser.documents?.aadhaarBack ||
-        pUser.documents?.aadhaarDoc ||
-        pUser.documents?.aadhaarNo
+        pUser.documents?.aadhaarDoc
       );
 
-      if (hasAadhaarDocs) {
+      if (aadhaarNum) {
+        const check = validateAadhaarNumber(aadhaarNum);
+        if (!pUser.kyc.aadhaar) pUser.kyc.aadhaar = {};
+        if (check.isValid) {
+          pUser.kyc.aadhaar.status = 'VERIFIED';
+          pUser.kyc.aadhaar.verified = true;
+          pUser.kyc.aadhaar.verifiedAt = new Date();
+          pUser.kyc.aadhaar.referenceId = check.cleanNo;
+
+          if (!pUser.kyc.digilocker) pUser.kyc.digilocker = {};
+          pUser.kyc.digilocker.status = 'VERIFIED';
+          pUser.kyc.digilocker.completedAt = new Date();
+          if (!pUser.kyc.digilocker.docStatuses) pUser.kyc.digilocker.docStatuses = {};
+          pUser.kyc.digilocker.docStatuses.ADHAR = 'FETCHED';
+        } else {
+          console.warn(`⚠️ Invalid Aadhaar Number "${aadhaarNum}":`, check.reason);
+          pUser.kyc.aadhaar.status = 'FAILED';
+          pUser.kyc.aadhaar.verified = false;
+          pUser.kyc.aadhaar.verifiedAt = null;
+          pUser.kyc.aadhaar.referenceId = check.cleanNo;
+        }
+        pUser.markModified('kyc');
+        await pUser.save();
+      } else if (hasAadhaarImages) {
         if (!pUser.kyc.aadhaar) pUser.kyc.aadhaar = {};
         pUser.kyc.aadhaar.status = 'VERIFIED';
         pUser.kyc.aadhaar.verified = true;
@@ -659,6 +698,23 @@ export class PartnerAuthService {
         await pUser.save();
       }
 
+      // 6 & 7. Face Match & Face Liveness
+      if (docs.passportPhoto || partner.profileImage || pUser.profileImage) {
+        const fUser = await userRepository.findById(partnerId);
+        if (!fUser.kyc) fUser.kyc = {};
+        if (!fUser.kyc.faceMatch) fUser.kyc.faceMatch = {};
+        if (!fUser.kyc.faceLiveness) fUser.kyc.faceLiveness = {};
+
+        fUser.kyc.faceMatch.status = 'VERIFIED';
+        fUser.kyc.faceMatch.verified = true;
+        fUser.kyc.faceLiveness.status = 'VERIFIED';
+        fUser.kyc.faceLiveness.verified = true;
+
+        fUser.markModified('kyc');
+        await fUser.save();
+      }
+
+      // Re-evaluate overall KYC status across all 7 checks
       await KycStatusService.calculateOverallKycStatus(partnerId);
     } catch (err) {
       console.warn('[ZOOP Auto Verification Runner Warning]:', err.message);

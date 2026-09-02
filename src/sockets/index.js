@@ -219,7 +219,8 @@ export const initSockets = (httpServer) => {
 
         // Broadcast to all other partners to dismiss incoming job offer
         const categoryName = typeof updatedBooking.category === 'object' ? (updatedBooking.category?.name || '') : String(updatedBooking.category || partner.category || '');
-        const bookingCity = String(updatedBooking.city || partner.assignedCity || 'Jaunpur').trim();
+        const rawPartnerCity = partner.assignedCity?.name || (typeof partner.assignedCity === 'string' ? partner.assignedCity : null) || partner.city || 'Jaunpur';
+        const bookingCity = String(updatedBooking.city || rawPartnerCity || 'Jaunpur').trim();
         const categoryRoom = `category_${String(categoryName).trim()}_${bookingCity}`;
 
         io.to(categoryRoom).to('all_online_partners').emit('job_claimed', {

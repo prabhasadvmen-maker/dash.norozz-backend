@@ -123,7 +123,8 @@ export class PartnerDashboardService {
   async getPendingBookings(partner) {
     this.checkKycApproved(partner);
 
-    const partnerCity = (partner.assignedCity || partner.city || 'Jaunpur').trim().toLowerCase();
+    const rawCityVal = partner.assignedCity?.name || (typeof partner.assignedCity === 'string' ? partner.assignedCity : null) || partner.city || 'Jaunpur';
+    const partnerCity = String(rawCityVal || 'Jaunpur').trim().toLowerCase();
     const partnerCatId = partner.category?._id ? String(partner.category._id) : String(partner.category || '');
     const partnerCats = Array.isArray(partner.categories) ? partner.categories.map((c) => String(c._id || c)) : [];
 

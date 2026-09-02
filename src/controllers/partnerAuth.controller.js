@@ -64,7 +64,7 @@ export class PartnerAuthController extends BaseController {
   });
 
   uploadDocuments = asyncHandler(async (req, res) => {
-    const result = await partnerAuthService.uploadDocuments(req.user._id, req.files || {});
+    const result = await partnerAuthService.uploadDocuments(req.user._id, req.files || {}, req.body || {});
     return this.sendSuccess(res, result, result.message);
   });
 

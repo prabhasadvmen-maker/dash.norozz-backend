@@ -87,72 +87,93 @@ export class TranslationService {
       };
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+    // Attempt translation with auto-retry on timeout
+    let attempts = 0;
+    const maxAttempts = 2;
+    let lastError = null;
 
-    try {
-      const response = await fetch(this.apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'api-subscription-key': apiKey,
-        },
-        body: JSON.stringify({
-          input: cleanText,
-          source_language_code: sourceLangCode,
-          target_language_code: targetLangCode,
-          speaker_gender: 'Female',
-          mode: 'formal',
-          model: 'mayura:v1',
-          enable_preprocessing: true,
-        }),
-        signal: controller.signal,
-      });
+    while (attempts < maxAttempts) {
+      attempts++;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout per item
 
-      clearTimeout(timeoutId);
+      try {
+        const response = await fetch(this.apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'api-subscription-key': apiKey,
+          },
+          body: JSON.stringify({
+            input: cleanText,
+            source_language_code: sourceLangCode,
+            target_language_code: targetLangCode,
+            speaker_gender: 'Female',
+            mode: 'formal',
+            model: 'mayura:v1',
+            enable_preprocessing: true,
+          }),
+          signal: controller.signal,
+        });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error('❌ Sarvam AI Translation API HTTP Error:', response.status, errorData);
-        const errorMsg = errorData.message || errorData.error || `HTTP ${response.status} from Sarvam API`;
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          console.error('❌ Sarvam AI Translation API HTTP Error:', response.status, errorData);
+          const errorMsg = errorData.message || errorData.error || `HTTP ${response.status} from Sarvam API`;
+          throw new ApiError(
+            response.status >= 400 && response.status < 500 ? HTTP_STATUS.BAD_REQUEST : HTTP_STATUS.BAD_GATEWAY,
+            `Translation Error: ${errorMsg}`
+          );
+        }
+
+        const data = await response.json();
+        const translatedText = data.translated_text || data.translatedText || cleanText;
+
+        // Store in cache
+        this.cache.set(cacheKey, translatedText);
+
+        return {
+          translatedText,
+          sourceLanguage: data.source_language_code || sourceLangCode,
+          targetLanguage: targetLangCode,
+          requestId: data.request_id || null,
+        };
+      } catch (error) {
+        clearTimeout(timeoutId);
+        lastError = error;
+
+        if (error.name === 'AbortError') {
+          console.warn(`⏳ Sarvam AI Translation timeout on attempt ${attempts} for "${cleanText.slice(0, 20)}..."`);
+          if (attempts < maxAttempts) {
+            await new Promise((resolve) => setTimeout(resolve, 300)); // short pause before retry
+            continue;
+          }
+          throw new ApiError(
+            HTTP_STATUS.GATEWAY_TIMEOUT,
+            'Translation service request timed out. Please try again.'
+          );
+        }
+
+        if (error instanceof ApiError) {
+          throw error;
+        }
+
+        if (attempts < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          continue;
+        }
+
+        console.error('❌ Sarvam AI Translation Network Error:', error.message);
         throw new ApiError(
-          response.status >= 400 && response.status < 500 ? HTTP_STATUS.BAD_REQUEST : HTTP_STATUS.BAD_GATEWAY,
-          `Translation Error: ${errorMsg}`
+          HTTP_STATUS.SERVICE_UNAVAILABLE,
+          `Translation service network error: ${error.message}`
         );
       }
-
-      const data = await response.json();
-      const translatedText = data.translated_text || data.translatedText || cleanText;
-
-      // Store in cache
-      this.cache.set(cacheKey, translatedText);
-
-      return {
-        translatedText,
-        sourceLanguage: data.source_language_code || sourceLangCode,
-        targetLanguage: targetLangCode,
-        requestId: data.request_id || null,
-      };
-    } catch (error) {
-      clearTimeout(timeoutId);
-
-      if (error.name === 'AbortError') {
-        throw new ApiError(
-          HTTP_STATUS.GATEWAY_TIMEOUT,
-          'Translation service request timed out. Please try again.'
-        );
-      }
-
-      if (error instanceof ApiError) {
-        throw error;
-      }
-
-      console.error('❌ Sarvam AI Translation Network Error:', error.message);
-      throw new ApiError(
-        HTTP_STATUS.SERVICE_UNAVAILABLE,
-        `Translation service network error: ${error.message}`
-      );
     }
+
+    throw lastError || new ApiError(HTTP_STATUS.SERVICE_UNAVAILABLE, 'Translation failed after retries');
   }
 
   /**
@@ -170,8 +191,8 @@ export class TranslationService {
     const uniqueTexts = [...new Set(texts.map((t) => String(t || '').trim()).filter((t) => t.length > 0))];
     const resultMap = {};
 
-    // Process in parallel batches of 10 to avoid overwhelming Sarvam API rate limits
-    const batchSize = 10;
+    // Process in optimal parallel chunks of 5 with 30ms delay to prevent Sarvam API rate spikes
+    const batchSize = 5;
     for (let i = 0; i < uniqueTexts.length; i += batchSize) {
       const chunk = uniqueTexts.slice(i, i + batchSize);
       await Promise.all(
@@ -185,6 +206,9 @@ export class TranslationService {
           }
         })
       );
+      if (i + batchSize < uniqueTexts.length) {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
     }
 
     return {
