@@ -35,6 +35,7 @@ router.post('/bookings/:id/verify-extra-payment', partnerDashboardController.ver
 // Wallet & Financials
 router.get('/wallet', partnerDashboardController.getWallet);
 router.post('/wallet/withdraw', partnerDashboardController.requestWithdrawal);
+router.post('/wallet/add-money', partnerDashboardController.addDepositToWallet);
 router.get('/earnings', partnerDashboardController.getEarnings);
 
 // Ratings & Customer Reviews

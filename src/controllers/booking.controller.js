@@ -35,7 +35,8 @@ export class BookingController extends BaseController {
   });
 
   completeBooking = asyncHandler(async (req, res) => {
-    const result = await bookingService.completeBooking(req.params.id, req.user);
+    const { paymentMethod } = req.body || {};
+    const result = await bookingService.completeBooking(req.params.id, req.user, paymentMethod);
     return this.sendSuccess(res, result, result.message);
   });
 

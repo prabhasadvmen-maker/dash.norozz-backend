@@ -150,44 +150,95 @@ export class FinancialEngineService {
       }
     }
 
-    // 2. Update Partner Account (Credit Net Earning -> Ledger Credit)
+    // 2. Update Partner Account (Dual Accounting: CASH vs ONLINE)
     if (partnerId) {
       const partner = await User.findById(partnerId);
       if (partner) {
-        const balBefore = partner.availableBalance || 0;
-        const newBal = balBefore + partnerNetEarning;
+        const balBefore = partner.walletBalance ?? partner.availableBalance ?? 0;
 
-        partner.availableBalance = newBal;
-        partner.walletBalance = newBal;
-        partner.withdrawableBalance = (partner.withdrawableBalance || 0) + partnerNetEarning;
-        partner.lifetimeEarnings = (partner.lifetimeEarnings || 0) + partnerNetEarning;
-        partner.totalCommissionPaid = (partner.totalCommissionPaid || 0) + partnerCommission;
-        await partner.save();
+        const isCash = String(booking.paymentMethod || '').toLowerCase().includes('cash') ||
+                       String(booking.extraPaymentMethod || '').toLowerCase().includes('cash');
 
-        await this.recordLedgerEntry({
-          orderId: booking._id,
-          userId: partner._id,
-          accountType: 'PARTNER_WALLET',
-          type: 'PARTNER_EARNING',
-          direction: 'CREDIT',
-          amount: partnerNetEarning,
-          balanceBefore: balBefore,
-          balanceAfter: newBal,
-          referenceType: 'Booking',
-          referenceId: booking.bookingId,
-          idempotencyKey: `SETTLE-PARTNER-${booking.bookingId}`,
-          metadata: { partnerNetEarning, partnerCommission, serviceValue: snapshot.servicePrice || 1000 },
-        });
+        let newBal = balBefore;
+        let txnType = 'Credit';
+        let txnCategory = 'Job Earnings';
+        let txnTitle = '';
+        let txnAmount = 0;
 
-        // Add WalletTransaction log for partner view visibility
+        if (isCash) {
+          // CASH PAYMENT: Customer paid 100% cash directly to Partner.
+          // Deduct platform commission / fee from Partner's Wallet!
+          const deductionAmount = partnerCommission;
+          newBal = Math.max(0, balBefore - deductionAmount);
+
+          partner.walletBalance = newBal;
+          partner.availableBalance = newBal;
+          partner.withdrawableBalance = newBal;
+          partner.totalCommissionPaid = (partner.totalCommissionPaid || 0) + deductionAmount;
+          await partner.save();
+
+          txnType = 'Debit';
+          txnCategory = 'Service Booking';
+          txnTitle = `Platform Fee Deduction (Cash Job #${booking.bookingId})`;
+          txnAmount = deductionAmount;
+
+          await this.recordLedgerEntry({
+            orderId: booking._id,
+            userId: partner._id,
+            accountType: 'PARTNER_WALLET',
+            type: 'COMMISSION_DEDUCTION',
+            direction: 'DEBIT',
+            amount: deductionAmount,
+            balanceBefore: balBefore,
+            balanceAfter: newBal,
+            referenceType: 'Booking',
+            referenceId: booking.bookingId,
+            idempotencyKey: `SETTLE-PARTNER-${booking.bookingId}`,
+            metadata: { isCash: true, deductionAmount, partnerCommission, bookingId: booking.bookingId },
+          });
+        } else {
+          // ONLINE PAYMENT: Customer paid online to Norozz Escrow.
+          // Deduct platform commission & Credit remaining Net Earning to Partner's Wallet!
+          const creditAmount = partnerNetEarning;
+          newBal = balBefore + creditAmount;
+
+          partner.walletBalance = newBal;
+          partner.availableBalance = newBal;
+          partner.withdrawableBalance = (partner.withdrawableBalance || 0) + creditAmount;
+          partner.lifetimeEarnings = (partner.lifetimeEarnings || 0) + creditAmount;
+          partner.totalCommissionPaid = (partner.totalCommissionPaid || 0) + partnerCommission;
+          await partner.save();
+
+          txnType = 'Credit';
+          txnCategory = 'Job Earnings';
+          txnTitle = `Job Net Earnings Credited (Online Job #${booking.bookingId})`;
+          txnAmount = creditAmount;
+
+          await this.recordLedgerEntry({
+            orderId: booking._id,
+            userId: partner._id,
+            accountType: 'PARTNER_WALLET',
+            type: 'PARTNER_EARNING',
+            direction: 'CREDIT',
+            amount: creditAmount,
+            balanceBefore: balBefore,
+            balanceAfter: newBal,
+            referenceType: 'Booking',
+            referenceId: booking.bookingId,
+            idempotencyKey: `SETTLE-PARTNER-${booking.bookingId}`,
+            metadata: { isCash: false, creditAmount, partnerCommission, serviceValue: snapshot.servicePrice || 1000 },
+          });
+        }
+
+        // Record WalletTransaction entry for Partner UI visibility
         const txnId = `TXN-${Math.floor(100000 + Math.random() * 900000)}`;
         await WalletTransaction.create({
           transactionId: txnId,
           partnerId: partner._id,
-          type: 'Credit',
-          category: 'Job Earnings',
-          title: `Job Commission Payout (${booking.packageName || 'Service Job'})`,
-          amount: partnerNetEarning,
+          type: txnType,
+          category: txnCategory,
+          title: txnTitle,
+          amount: txnAmount,
           status: 'Completed',
         }).catch((err) => console.warn('Wallet transaction logging warning:', err));
       }

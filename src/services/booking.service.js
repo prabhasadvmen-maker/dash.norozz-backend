@@ -424,16 +424,30 @@ export class BookingService {
       addedAt: new Date(),
     });
 
+    // Recalculate full financial breakdown including extra services + customer platform fee
+    const totalExtraPrice = booking.extraServices.reduce((sum, item) => sum + Number(item.price || 0), 0);
+    const baseSvcPrice = booking.financialSnapshot?.servicePrice || booking.amount || 276;
+
+    const newSnapshot = await financialCalculatorService.calculateBreakdown({
+      servicePrice: baseSvcPrice,
+      extraServicesPrice: totalExtraPrice,
+      categoryId: booking.category,
+      discountAmount: booking.financialSnapshot?.discountAmount || 0,
+      discountBearBy: booking.financialSnapshot?.discountBearBy || 'CUSTOMER',
+    });
+
+    booking.financialSnapshot = newSnapshot;
     await booking.save();
 
     return {
       message: `Added extra service '${combinedItemName}' (+₹${trustedPrice})`,
       addedItem: booking.extraServices[booking.extraServices.length - 1],
+      financialSnapshot: newSnapshot,
       booking,
     };
   }
 
-  // 6e. CALCULATE PAYABLE UNPAID AMOUNT (SERVER-SIDE SOURCE OF TRUTH)
+  // 6e. CALCULATE PAYABLE UNPAID AMOUNT INCLUDING PLATFORM FEE (SERVER-SIDE SOURCE OF TRUTH)
   async calculatePayableAmount(bookingId) {
     const booking = await bookingRepository.findById(bookingId);
     if (!booking) {
@@ -442,18 +456,31 @@ export class BookingService {
 
     const extraServices = booking.extraServices || [];
     const unpaidItems = extraServices.filter((item) => item.paymentStatus === 'UNPAID');
-    const payableAmount = unpaidItems.reduce((sum, item) => sum + Number(item.price || 0), 0);
+    const extraServicesPrice = unpaidItems.reduce((sum, item) => sum + Number(item.price || 0), 0);
+
+    const extraBreakdown = await financialCalculatorService.calculateBreakdown({
+      servicePrice: 0,
+      extraServicesPrice,
+      categoryId: booking.category,
+      discountAmount: 0,
+      discountBearBy: 'CUSTOMER',
+    });
+
     const paidItems = extraServices.filter((item) => item.paymentStatus === 'PAID');
+    const totalPayableWithFee = extraBreakdown.customerPayable || extraServicesPrice;
 
     return {
       bookingId: booking._id,
       bookingNumber: booking.bookingId,
       originalPaidAmount: booking.amount,
-      payableAmount,
+      extraServicesPrice,
+      customerPlatformFee: extraBreakdown.customerPlatformFee,
+      partnerCommission: extraBreakdown.partnerCommission,
+      payableAmount: totalPayableWithFee,
       unpaidItemsCount: unpaidItems.length,
       unpaidItems,
       paidItems,
-      allAlreadyPaid: payableAmount === 0,
+      allAlreadyPaid: totalPayableWithFee === 0,
     };
   }
 
@@ -467,17 +494,16 @@ export class BookingService {
     const txnId = paymentTxnId || `PAY-EXT-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     booking.extraServices = (booking.extraServices || []).map((item) => {
-      if (item.paymentStatus === 'UNPAID') {
-        return {
-          ...item.toObject(),
-          paymentStatus: 'PAID',
-          paymentTxnId: txnId,
-          paidAt: new Date(),
-        };
-      }
-      return item;
+      const plainObj = typeof item.toObject === 'function' ? item.toObject() : item;
+      return {
+        ...plainObj,
+        paymentStatus: 'PAID',
+        paymentTxnId: txnId,
+        paidAt: new Date(),
+      };
     });
 
+    booking.markModified('extraServices');
     await booking.save();
 
     return {
@@ -495,19 +521,23 @@ export class BookingService {
       throw new ApiError(HTTP_STATUS.FORBIDDEN, 'You are not assigned to this booking');
     }
 
-    // Guard: Enforce all extra services are PAID before completion
-    const unpaidItems = (booking.extraServices || []).filter((item) => item.paymentStatus === 'UNPAID');
-    if (unpaidItems.length > 0) {
-      const unpaidSum = unpaidItems.reduce((sum, item) => sum + Number(item.price || 0), 0);
-      throw new ApiError(
-        HTTP_STATUS.BAD_REQUEST,
-        `Cannot complete service. Unpaid extra services worth ₹${unpaidSum} require payment confirmation first.`
-      );
+    // Auto-mark extra services PAID if partner confirmed payment method on completion
+    if (paymentMethod) {
+      booking.paymentMethod = paymentMethod;
+      booking.extraServices = (booking.extraServices || []).map((item) => {
+        const plainObj = typeof item.toObject === 'function' ? item.toObject() : item;
+        return {
+          ...plainObj,
+          paymentStatus: 'PAID',
+          paymentTxnId: plainObj.paymentTxnId || `PAY-EXT-${Date.now()}`,
+          paidAt: plainObj.paidAt || new Date(),
+        };
+      });
+      booking.markModified('extraServices');
     }
 
     booking.status = 'Completed';
     booking.paymentStatus = 'paid';
-    booking.paymentMethod = paymentMethod || booking.paymentMethod || 'UPI';
     booking.completedAt = new Date();
     await booking.save();
 

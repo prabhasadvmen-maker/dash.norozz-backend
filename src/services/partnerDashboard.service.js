@@ -428,6 +428,35 @@ export class PartnerDashboardService {
     };
   }
 
+  async addDepositToWallet(partnerId, amount) {
+    const user = await userRepository.findById(partnerId);
+    if (!user) throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner user not found');
+    const numAmount = Number(amount);
+    if (isNaN(numAmount) || numAmount <= 0) {
+      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Please enter a valid deposit amount');
+    }
+
+    user.walletBalance = (user.walletBalance || 0) + numAmount;
+    await user.save();
+
+    const txnId = `TXN-${Math.floor(100000 + Math.random() * 900000)}`;
+    const txn = await WalletTransaction.create({
+      transactionId: txnId,
+      partnerId: user._id,
+      type: 'Credit',
+      category: 'Added to Wallet',
+      title: 'Partner Wallet Deposit / Top-up',
+      amount: numAmount,
+      status: 'Completed',
+    });
+
+    return {
+      message: `₹${numAmount.toLocaleString('en-IN')} successfully added to your wallet!`,
+      walletBalance: user.walletBalance,
+      transaction: txn,
+    };
+  }
+
   // 4. RATING & REVIEWS
   async getRating(partner) {
     return {

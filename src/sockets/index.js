@@ -406,10 +406,14 @@ export const dispatchNewJobOffer = async (booking) => {
     const partners = await userRepository.find({
       role: ROLES.PARTNER,
       status: 'active',
+      isOnline: true,
     });
 
-    // Filter partners based on offeredServices, Category, and Work Area City
+    // Filter partners based on offeredServices, Category, KYC Approval, and Work Area City
     const eligiblePartners = partners.filter((partner) => {
+      // 0. KYC Approval and Online Check
+      if (!partner.isOnline || partner.kycStatus !== 'approved') return false;
+
       // 1. Category check
       const partnerCatId = partner.category?._id ? String(partner.category._id) : String(partner.category || '');
       const partnerCats = Array.isArray(partner.categories) ? partner.categories.map((c) => String(c._id || c)) : [];
@@ -438,7 +442,7 @@ export const dispatchNewJobOffer = async (booking) => {
       return true;
     });
 
-    console.log(`📢 Real-time Dispatching Booking [${booking.bookingId || booking._id}] for Service [${serviceName}] to ${eligiblePartners.length} matching partners!`);
+    console.log(`📢 Real-time Dispatching Booking [${booking.bookingId || booking._id}] for Service [${serviceName}] to ${eligiblePartners.length} matching ONLINE partners!`);
 
     const offerPayload = {
       bookingId: booking._id,
@@ -458,18 +462,12 @@ export const dispatchNewJobOffer = async (booking) => {
       expirySeconds: 60,
     };
 
-    // 1. Emit directly to each matching partner's individual room
+    // Emit directly only to eligible online approved partners' individual rooms
     eligiblePartners.forEach((partner) => {
       const partnerRoom = `partner_${partner._id}`;
       io.to(partnerRoom).emit('new_job_offer', offerPayload);
-      console.log(`📡 Emitted new_job_offer to room [${partnerRoom}] (${partner.name})`);
+      console.log(`📡 Emitted new_job_offer to online partner room [${partnerRoom}] (${partner.name})`);
     });
-
-    // 2. Broadcast to Category & City Room and Category ID Room
-    const categoryNameRoom = `category_${(categoryName || '').trim()}_${bookingCity.trim()}`;
-    const categoryIdRoom = `category_${categoryId}_${bookingCity.trim()}`;
-    
-    io.to(categoryNameRoom).to(categoryIdRoom).to('all_online_partners').emit('new_job_offer', offerPayload);
 
     return offerPayload;
   } catch (err) {

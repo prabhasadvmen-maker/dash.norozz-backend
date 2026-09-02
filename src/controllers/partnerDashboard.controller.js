@@ -85,6 +85,11 @@ export class PartnerDashboardController extends BaseController {
     return this.sendSuccess(res, result, result.message);
   });
 
+  addDepositToWallet = asyncHandler(async (req, res) => {
+    const result = await partnerDashboardService.addDepositToWallet(req.user._id, req.body.amount);
+    return this.sendSuccess(res, result, result.message);
+  });
+
   getRating = asyncHandler(async (req, res) => {
     const rating = await partnerDashboardService.getRating(req.user);
     return this.sendSuccess(res, rating, 'Rating metrics retrieved successfully');
