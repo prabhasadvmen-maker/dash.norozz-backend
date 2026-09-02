@@ -25,17 +25,24 @@ export class TranslationService {
   /**
    * Helper to normalize language code string to valid Sarvam language tag (e.g. 'hi' -> 'hi-IN')
    */
-  normalizeLangCode(langCode) {
-    if (!langCode) return 'en-IN';
+  normalizeLangCode(langCode, defaultFallback = 'en-IN') {
+    if (!langCode) return defaultFallback;
     const clean = String(langCode).trim();
     if (SUPPORTED_LANGUAGES[clean]) return clean;
 
-    const shortCode = clean.split('-')[0].toLowerCase();
-    const match = Object.keys(SUPPORTED_LANGUAGES).find(
+    const lower = clean.toLowerCase();
+
+    const nameMatch = Object.entries(SUPPORTED_LANGUAGES).find(
+      ([code, name]) => name.toLowerCase() === lower || code.toLowerCase() === lower
+    );
+    if (nameMatch) return nameMatch[0];
+
+    const shortCode = lower.split(/[-_]/)[0];
+    const shortMatch = Object.keys(SUPPORTED_LANGUAGES).find(
       (code) => code.split('-')[0].toLowerCase() === shortCode
     );
 
-    return match || 'en-IN';
+    return shortMatch || defaultFallback;
   }
 
   /**
@@ -55,8 +62,8 @@ export class TranslationService {
       );
     }
 
-    const sourceLangCode = this.normalizeLangCode(sourceLanguage);
-    const targetLangCode = this.normalizeLangCode(targetLanguage);
+    const sourceLangCode = this.normalizeLangCode(sourceLanguage, 'en-IN');
+    const targetLangCode = this.normalizeLangCode(targetLanguage, 'hi-IN');
 
     const cleanText = text.trim();
 

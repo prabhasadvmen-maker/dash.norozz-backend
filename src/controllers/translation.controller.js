@@ -54,16 +54,29 @@ export class TranslationController {
     try {
       const {
         texts,
+        text,
+        input,
         sourceLanguage,
+        source_language,
         source_language_code,
+        sourceLang,
+        source_lang,
+        source,
         targetLanguage,
+        target_language,
         target_language_code,
+        targetLang,
+        target_lang,
+        target,
+        lang,
       } = req.body || {};
 
-      const srcLang = sourceLanguage || source_language_code || 'en-IN';
-      const tgtLang = targetLanguage || target_language_code || 'hi-IN';
+      const inputTexts = texts || (Array.isArray(text) ? text : (Array.isArray(input) ? input : null));
 
-      if (!Array.isArray(texts)) {
+      const srcLang = sourceLanguage || source_language || source_language_code || sourceLang || source_lang || source || 'en-IN';
+      const tgtLang = targetLanguage || target_language || target_language_code || targetLang || target_lang || target || lang || 'hi-IN';
+
+      if (!Array.isArray(inputTexts)) {
         throw new ApiError(
           HTTP_STATUS.BAD_REQUEST,
           'Validation Error: "texts" field must be an array of strings.'
@@ -71,7 +84,7 @@ export class TranslationController {
       }
 
       const result = await translationService.translateBatch({
-        texts,
+        texts: inputTexts,
         sourceLanguage: srcLang,
         targetLanguage: tgtLang,
       });
