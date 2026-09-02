@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { User } from '../models/user.model.js';
+import { City } from '../models/city.model.js';
 import { userRepository } from '../repositories/user.repository.js';
 import { otpRepository } from '../repositories/otp.repository.js';
 import { storageService } from './storage.service.js';
@@ -203,7 +204,7 @@ export class PartnerAuthService {
         password: 'AutoOtpPartnerPass123!',
         role: ROLES.PARTNER,
         city: '',
-        assignedCity: '',
+        assignedCity: null,
         status: 'active',
         kycStatus: 'pending',
         isEmailVerified: false,
@@ -317,6 +318,27 @@ export class PartnerAuthService {
       }
       sanitizedData.email = cleanEmail;
       sanitizedData.isEmailVerified = true;
+    }
+
+    if (sanitizedData.assignedCity !== undefined) {
+      if (!sanitizedData.assignedCity || sanitizedData.assignedCity === '') {
+        sanitizedData.assignedCity = null;
+      } else {
+        const cityVal = String(sanitizedData.assignedCity).trim();
+        let cityObj = null;
+        if (cityVal.match(/^[0-9a-fA-F]{24}$/)) {
+          cityObj = await City.findById(cityVal);
+        }
+        if (!cityObj) {
+          cityObj = await City.findOne({ name: { $regex: new RegExp(`^${cityVal}$`, 'i') } });
+        }
+        if (cityObj) {
+          sanitizedData.assignedCity = cityObj._id.toString();
+          sanitizedData.city = cityObj.name;
+        } else {
+          sanitizedData.assignedCity = null;
+        }
+      }
     }
 
     if (sanitizedData.name && !sanitizedData.agencyName) {

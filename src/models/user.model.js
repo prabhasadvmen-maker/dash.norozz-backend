@@ -73,8 +73,9 @@ const userSchema = new mongoose.Schema(
       default: '',
     },
     assignedCity: {
-      type: String,
-      default: '',
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'City',
+      default: null,
     },
     state: {
       type: String,
