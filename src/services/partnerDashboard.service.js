@@ -598,6 +598,10 @@ export class PartnerDashboardService {
 
   // 9. COMPLAINTS & TICKETS
   async submitComplaint(partnerId, { complaintType, bookingId, description, priority, screenshot }) {
+    const { User } = await import('../models/user.model.js');
+    const { Ticket } = await import('../models/ticket.model.js');
+
+    const partner = await User.findById(partnerId).populate('assignedCity');
     const ticketId = `TKT-${Math.floor(100000 + Math.random() * 900000)}`;
     const complaint = await Complaint.create({
       ticketId,
@@ -609,6 +613,25 @@ export class PartnerDashboardService {
       screenshot: screenshot || '',
       status: 'Open',
     });
+
+    // Also populate unified Ticket collection for Super Admin & City Admin dashboards
+    const partnerCity = partner?.assignedCity?.name || (typeof partner?.assignedCity === 'string' ? partner?.assignedCity : null) || partner?.city || 'Delhi NCR';
+    await Ticket.create({
+      ticketId,
+      user: partnerId,
+      userName: partner?.name || 'Partner Technician',
+      userPhone: partner?.phone || '',
+      userEmail: partner?.email || '',
+      userType: 'partner',
+      city: partnerCity,
+      category: complaintType || 'Partner Issue',
+      bookingId: bookingId || '',
+      subject: `${complaintType || 'Partner Complaint'} (${bookingId || 'General'})`,
+      description: description,
+      priority: priority || 'Medium',
+      status: 'Open',
+    });
+
     return complaint;
   }
 

@@ -17,6 +17,7 @@ router.use(authorizeRoles(ROLES.PARTNER));
 
 // Dashboard Overview & FAQs
 router.get('/dashboard', partnerDashboardController.getDashboard);
+router.get('/faqs', partnerDashboardController.getFaqs);
 // Offered Extra Services Catalog
 router.get('/offered-services', partnerDashboardController.getOfferedServices);
 router.get('/bookings/:id/offered-services', partnerDashboardController.getOfferedServices);
