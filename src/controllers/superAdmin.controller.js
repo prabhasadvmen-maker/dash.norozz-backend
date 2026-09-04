@@ -71,6 +71,11 @@ export class SuperAdminController extends BaseController {
     return this.sendSuccess(res, result, result.message);
   });
 
+  getAllReferrals = asyncHandler(async (req, res) => {
+    const data = await superAdminService.getAllReferrals();
+    return this.sendSuccess(res, data, 'Platform referral records retrieved successfully');
+  });
+
   // Coupons CRUD
   getCoupons = asyncHandler(async (req, res) => {
     const coupons = await superAdminService.getAllCoupons();
@@ -90,6 +95,32 @@ export class SuperAdminController extends BaseController {
   deleteCoupon = asyncHandler(async (req, res) => {
     const result = await superAdminService.deleteCoupon(req.params.id);
     return this.sendSuccess(res, result, result.message);
+  });
+
+  // Banners CRUD
+  getBanners = asyncHandler(async (req, res) => {
+    const banners = await superAdminService.getAllBanners();
+    return this.sendSuccess(res, banners, 'Promotional banners retrieved successfully');
+  });
+
+  createBanner = asyncHandler(async (req, res) => {
+    const banner = await superAdminService.createBanner(req.body);
+    return this.sendCreated(res, banner, 'Promotional banner created successfully');
+  });
+
+  updateBanner = asyncHandler(async (req, res) => {
+    const banner = await superAdminService.updateBanner(req.params.id, req.body);
+    return this.sendSuccess(res, banner, 'Promotional banner updated successfully');
+  });
+
+  deleteBanner = asyncHandler(async (req, res) => {
+    const result = await superAdminService.deleteBanner(req.params.id);
+    return this.sendSuccess(res, result, result.message);
+  });
+
+  toggleBannerStatus = asyncHandler(async (req, res) => {
+    const banner = await superAdminService.toggleBannerStatus(req.params.id);
+    return this.sendSuccess(res, banner, `Banner ${banner.isActive ? 'activated' : 'deactivated'} successfully`);
   });
 }
 

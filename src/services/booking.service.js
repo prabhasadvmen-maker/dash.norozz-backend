@@ -544,6 +544,48 @@ export class BookingService {
     // Trigger Financial Engine Atomic Double-Entry Settlement
     const settlementResult = await financialEngineService.settleBooking(bookingId);
 
+    // Auto-credit Referral Bonus if partner was referred and this is their 1st completed job
+    try {
+      const p = await userRepository.findById(partnerUser._id);
+      if (p && p.referredByPartner && p.referralBonusStatus !== 'credited') {
+        const completedJobsCount = await bookingRepository.model.countDocuments({
+          $or: [{ partner: p._id }, { partner: String(p._id) }],
+          status: { $in: ['Completed', 'completed'] },
+        });
+
+        if (completedJobsCount >= 1) {
+          const { SystemSettings } = await import('../models/systemSettings.model.js');
+          const { WalletTransaction } = await import('../models/walletTransaction.model.js');
+          const settings = await SystemSettings.findOne({ key: 'global_settings' });
+          const bonusAmt = settings?.referralBonusAmount ?? 500;
+
+          const referrer = await userRepository.findById(p.referredByPartner);
+          if (referrer) {
+            referrer.walletBalance = (referrer.walletBalance || 0) + bonusAmt;
+            referrer.availableBalance = (referrer.availableBalance || 0) + bonusAmt;
+            referrer.referralEarnings = (referrer.referralEarnings || 0) + bonusAmt;
+            await referrer.save();
+
+            const txnId = `REF-${Math.floor(100000 + Math.random() * 900000)}`;
+            await WalletTransaction.create({
+              transactionId: txnId,
+              partnerId: referrer._id,
+              type: 'Credit',
+              category: 'Referral Bonus',
+              title: `Referral Bonus for inviting ${p.name || 'Service Technician'}`,
+              amount: bonusAmt,
+              status: 'Completed',
+            });
+          }
+
+          p.referralBonusStatus = 'credited';
+          await p.save();
+        }
+      }
+    } catch (refErr) {
+      console.error('Referral bonus processing notice:', refErr.message);
+    }
+
     return {
       message: 'Service completed & financial settlement executed successfully!',
       status: 'Completed',

@@ -9,6 +9,11 @@ export class CustomerDashboardController extends BaseController {
     return this.sendSuccess(res, data, 'Customer Mobile Home Feed retrieved successfully');
   });
 
+  getBanners = asyncHandler(async (req, res) => {
+    const banners = await customerDashboardService.getBanners();
+    return this.sendSuccess(res, banners, 'Customer promotional banners retrieved successfully');
+  });
+
   getCategories = asyncHandler(async (req, res) => {
     const categories = await customerDashboardService.getCategories();
     return this.sendSuccess(res, categories, 'Popular service categories retrieved successfully');
@@ -98,6 +103,25 @@ export class CustomerDashboardController extends BaseController {
   getSystemSettings = asyncHandler(async (req, res) => {
     const settings = await customerDashboardService.getSystemSettings();
     return this.sendSuccess(res, settings, 'Global system settings retrieved successfully');
+  });
+
+  getAiChatHistory = asyncHandler(async (req, res) => {
+    const { aiChatService } = await import('../services/aiChat.service.js');
+    const history = await aiChatService.getChatHistory(req.user);
+    return this.sendSuccess(res, history, 'Customer AI chat history retrieved successfully');
+  });
+
+  clearAiChatHistory = asyncHandler(async (req, res) => {
+    const { aiChatService } = await import('../services/aiChat.service.js');
+    const result = await aiChatService.clearChatHistory(req.user);
+    return this.sendSuccess(res, result, 'Customer AI chat history cleared successfully');
+  });
+
+  chatWithAi = asyncHandler(async (req, res) => {
+    const { aiChatService } = await import('../services/aiChat.service.js');
+    const { message } = req.body;
+    const result = await aiChatService.getChatCompletion(req.user, message);
+    return this.sendSuccess(res, result, 'Norozz AI response generated successfully');
   });
 }
 

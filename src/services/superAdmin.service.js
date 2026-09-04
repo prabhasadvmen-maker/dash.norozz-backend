@@ -373,6 +373,111 @@ export class SuperAdminService {
       settings,
     };
   }
+
+  async getAllReferrals() {
+    const { User } = await import('../models/user.model.js');
+    const { WalletTransaction } = await import('../models/walletTransaction.model.js');
+
+    const settings = await this.getReferralSettings();
+    const bonusAmount = settings?.referralBonusAmount ?? 500;
+
+    const referredUsers = await User.find({
+      $or: [
+        { referredBy: { $exists: true, $ne: '' } },
+        { referredByPartner: { $exists: true, $ne: null } },
+      ],
+    })
+      .populate('referredByPartner', 'name userId phone referralCode')
+      .select('name userId phone email role city status kycStatus referredBy referredByPartner referralBonusStatus createdAt')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const referralTxns = await WalletTransaction.find({
+      category: 'Referral Bonus',
+    }).lean();
+
+    const totalBonusPaid = referralTxns.reduce((sum, t) => sum + (t.amount || 0), 0);
+    const totalReferredCount = referredUsers.length;
+
+    return {
+      referralSettings: settings,
+      totalReferredCount,
+      totalBonusPaid,
+      referralList: referredUsers,
+    };
+  }
+
+  // BANNER MANAGEMENT
+  async getAllBanners() {
+    const { Banner } = await import('../models/banner.model.js');
+    return await Banner.find({}).sort({ displayOrder: 1, createdAt: -1 });
+  }
+
+  async createBanner(data) {
+    const { Banner } = await import('../models/banner.model.js');
+    const { title, subtitle, badgeText, imageUrl, gradientBg, targetType, targetValue, couponCode, isActive, displayOrder } = data;
+
+    if (!title) {
+      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Banner title is required');
+    }
+
+    const banner = await Banner.create({
+      title,
+      subtitle: subtitle || '',
+      badgeText: badgeText || 'SPECIAL OFFER',
+      imageUrl: imageUrl || '',
+      gradientBg: gradientBg || 'linear-gradient(135deg, #09331E 0%, #064e3b 50%, #0f172a 100%)',
+      targetType: targetType || 'none',
+      targetValue: targetValue || '',
+      couponCode: couponCode ? String(couponCode).trim().toUpperCase() : '',
+      isActive: isActive !== undefined ? Boolean(isActive) : true,
+      displayOrder: Number(displayOrder || 0),
+    });
+
+    return banner;
+  }
+
+  async updateBanner(id, data) {
+    const { Banner } = await import('../models/banner.model.js');
+    const banner = await Banner.findById(id);
+    if (!banner) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Banner not found');
+    }
+
+    if (data.title !== undefined) banner.title = data.title;
+    if (data.subtitle !== undefined) banner.subtitle = data.subtitle;
+    if (data.badgeText !== undefined) banner.badgeText = data.badgeText;
+    if (data.imageUrl !== undefined) banner.imageUrl = data.imageUrl;
+    if (data.gradientBg !== undefined) banner.gradientBg = data.gradientBg;
+    if (data.targetType !== undefined) banner.targetType = data.targetType;
+    if (data.targetValue !== undefined) banner.targetValue = data.targetValue;
+    if (data.couponCode !== undefined) banner.couponCode = String(data.couponCode).trim().toUpperCase();
+    if (data.isActive !== undefined) banner.isActive = Boolean(data.isActive);
+    if (data.displayOrder !== undefined) banner.displayOrder = Number(data.displayOrder);
+
+    await banner.save();
+    return banner;
+  }
+
+  async deleteBanner(id) {
+    const { Banner } = await import('../models/banner.model.js');
+    const banner = await Banner.findByIdAndDelete(id);
+    if (!banner) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Banner not found');
+    }
+    return { message: 'Banner deleted successfully' };
+  }
+
+  async toggleBannerStatus(id) {
+    const { Banner } = await import('../models/banner.model.js');
+    const banner = await Banner.findById(id);
+    if (!banner) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Banner not found');
+    }
+    banner.isActive = !banner.isActive;
+    await banner.save();
+    return banner;
+  }
 }
 
 export const superAdminService = new SuperAdminService();

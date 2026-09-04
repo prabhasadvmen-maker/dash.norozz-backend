@@ -15,6 +15,7 @@ router.use(authorizeRoles(ROLES.CUSTOMER));
 
 // Combined Home Feed & Catalogs
 router.get('/dashboard', customerDashboardController.getDashboard);
+router.get('/banners', customerDashboardController.getBanners);
 router.get('/categories', customerDashboardController.getCategories);
 router.get('/services/popular', customerDashboardController.getPopularServices);
 router.get('/services/featured', customerDashboardController.getFeaturedServices);
@@ -43,5 +44,10 @@ router.post('/referral/invite', customerDashboardController.sendReferralInvite);
 
 // System Settings Endpoint
 router.get('/system-settings', customerDashboardController.getSystemSettings);
+
+// Groq AI Support Assistant Chat Endpoints
+router.get('/ai-chat/history', customerDashboardController.getAiChatHistory);
+router.delete('/ai-chat/history', customerDashboardController.clearAiChatHistory);
+router.post('/ai-chat', customerDashboardController.chatWithAi);
 
 export default router;

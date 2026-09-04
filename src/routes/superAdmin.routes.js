@@ -36,14 +36,22 @@ router.get('/customers', superAdminController.getCustomers);
 router.get('/partners', superAdminController.getPartners);
 router.get('/bookings', superAdminController.getBookings);
 
-// Global Referral Bonus Settings
+// Global Referral Bonus Settings & Platform Referral Log
 router.get('/referral-settings', superAdminController.getReferralSettings);
 router.put('/referral-settings', superAdminController.updateReferralSettings);
+router.get('/referrals', superAdminController.getAllReferrals);
 
 // Coupon Management CRUD
 router.get('/coupons', superAdminController.getCoupons);
 router.post('/coupons', superAdminController.createCoupon);
 router.put('/coupons/:id', superAdminController.updateCoupon);
 router.delete('/coupons/:id', superAdminController.deleteCoupon);
+
+// Banner Management CRUD
+router.get('/banners', superAdminController.getBanners);
+router.post('/banners', superAdminController.createBanner);
+router.put('/banners/:id', superAdminController.updateBanner);
+router.delete('/banners/:id', superAdminController.deleteBanner);
+router.patch('/banners/:id/status', superAdminController.toggleBannerStatus);
 
 export default router;

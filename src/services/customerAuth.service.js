@@ -293,12 +293,23 @@ export class CustomerAuthService {
   }
 
   async updateProfile(customerId, updateData, file = null) {
-    const allowedFields = ['name', 'email', 'phone', 'dob', 'gender', 'profileImage', 'city', 'state', 'country', 'address', 'isProfileCompleted', 'isEmailVerified', 'isPhoneVerified'];
+    const allowedFields = ['name', 'email', 'phone', 'dob', 'gender', 'profileImage', 'city', 'state', 'country', 'address', 'isProfileCompleted', 'isEmailVerified', 'isPhoneVerified', 'referredBy', 'usedReferralCode'];
     const sanitizedData = {};
 
     for (const field of allowedFields) {
       if (updateData[field] !== undefined) {
         sanitizedData[field] = updateData[field];
+      }
+    }
+
+    const { User } = await import('../models/user.model.js');
+    const inputRefCode = updateData.referredBy || updateData.usedReferralCode || updateData.referralCodeUsed;
+    if (inputRefCode) {
+      const cleanRefCode = String(inputRefCode).trim().toUpperCase();
+      const referrer = await User.findOne({ referralCode: cleanRefCode });
+      if (referrer && referrer._id.toString() !== customerId.toString()) {
+        sanitizedData.referredBy = cleanRefCode;
+        sanitizedData.referredByPartner = referrer._id;
       }
     }
 

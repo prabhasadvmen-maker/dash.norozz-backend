@@ -27,11 +27,10 @@ export class CustomerDashboardService {
       }
     }
 
+    const activeBanners = await this.getBanners();
+
     return {
-      banners: [
-        { id: 1, title: 'AC Jet Deep Cleaning', discount: 'Flat 50% OFF', code: 'SUMMER50', bg: 'linear-gradient(135deg, #2563eb, #7c3aed)' },
-        { id: 2, title: 'Full House Deep Clean', discount: 'Save ₹500 Instant', code: 'CLEAN500', bg: 'linear-gradient(135deg, #059669, #10b981)' },
-      ],
+      banners: activeBanners,
       categories: await this.getCategories(),
       popularServices: await this.getPopularServices(),
       featuredServices: await this.getFeaturedServices(),
@@ -41,6 +40,42 @@ export class CustomerDashboardService {
       savedAddresses: user?.addresses || [],
       recentBookings: recentBookings.slice(0, 3),
     };
+  }
+
+  async getBanners() {
+    const { Banner } = await import('../models/banner.model.js');
+    let banners = await Banner.find({ isActive: true }).sort({ displayOrder: 1, createdAt: -1 });
+
+    if (!banners || banners.length === 0) {
+      banners = [
+        {
+          _id: 'default_1',
+          title: 'AC Jet Deep Cleaning',
+          subtitle: 'Flat 50% OFF on 1st Service',
+          badgeText: 'SUMMER SPECIAL',
+          couponCode: 'SUMMER50',
+          targetType: 'category',
+          targetValue: 'AC & Appliance Repair',
+          gradientBg: 'linear-gradient(135deg, #09331E 0%, #064e3b 50%, #0f172a 100%)',
+          imageUrl: '',
+          isActive: true,
+        },
+        {
+          _id: 'default_2',
+          title: 'Full House Deep Cleaning',
+          subtitle: 'Save ₹500 Instant Discount',
+          badgeText: 'HOT DEAL',
+          couponCode: 'CLEAN500',
+          targetType: 'service',
+          targetValue: 'Full Home Deep Cleaning 3BHK',
+          gradientBg: 'linear-gradient(135deg, #1e3a8a 0%, #2563eb 50%, #7c3aed 100%)',
+          imageUrl: '',
+          isActive: true,
+        },
+      ];
+    }
+
+    return banners;
   }
 
   // 2. CATEGORIES & SERVICES (Real Database Data Created By Admin)
@@ -374,6 +409,10 @@ export class CustomerDashboardService {
 
   // 6. REFERRAL & EARN (Database Live Integration & SuperAdmin Configuration)
   async getReferralData(customer) {
+    const { User } = await import('../models/user.model.js');
+    const { WalletTransaction } = await import('../models/walletTransaction.model.js');
+    const { ROLES } = await import('../constants/roles.constant.js');
+
     const user = await userRepository.findById(customer._id);
     if (!user) throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Customer user not found');
 
@@ -385,27 +424,60 @@ export class CustomerDashboardService {
     const rewardPerReferral = settings.referralBonusAmount || 200;
 
     // 2. Generate unique referralCode PER USER if not already generated
-    if (!user.referralCode || user.referralCode === 'ANANYA200' || user.referralCode.includes('CUSTOMER')) {
+    let refCode = user.referralCode;
+    if (!refCode || refCode === 'ANANYA200' || refCode.includes('CUSTOMER')) {
       const cleanSeed = (user.name || user.email || 'USER').replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 5) || 'NRZ';
       const randomFour = Math.floor(1000 + Math.random() * 9000);
-      user.referralCode = `${cleanSeed}${randomFour}`;
+      refCode = `${cleanSeed}${randomFour}`;
+      user.referralCode = refCode;
       await user.save();
     }
 
-    const invitedCount = user.referralInvitedCount || 0;
-    const joinedCount = user.referralJoinedCount || 0;
-    const totalEarned = user.referralEarnings || (joinedCount * rewardPerReferral);
-    const referralsList = user.referralsList || [];
+    // Query ALL users (Customers & Technicians) registered using this customer's referral code or ObjectId
+    const joinedUsers = await User.find({
+      $or: [
+        { referredBy: refCode },
+        { referralCodeUsed: refCode },
+        { referredByPartner: customer._id },
+        { referredBy: String(customer._id) },
+      ],
+    })
+      .select('name userId phone email role status kycStatus referralBonusStatus createdAt')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const joinedCount = joinedUsers.length;
+    const joinedTechniciansCount = joinedUsers.filter((u) => u.role === ROLES.PARTNER).length;
+    const joinedCustomersCount = joinedUsers.filter((u) => u.role === ROLES.CUSTOMER).length;
+
+    // Calculate Referral Bonus Earned from Wallet Transactions
+    const referralTxns = await WalletTransaction.find({
+      user: customer._id,
+      category: 'Referral Bonus',
+    }).lean();
+
+    const totalBonusEarned = referralTxns.reduce((sum, t) => sum + (t.amount || 0), 0);
+    const creditedCount = joinedUsers.filter((p) => p.referralBonusStatus === 'credited').length;
+    const pendingCount = joinedCount - creditedCount;
+    const pendingEarned = pendingCount * rewardPerReferral;
 
     return {
-      referralCode: user.referralCode,
+      referralCode: refCode,
       rewardPerReferral,
+      referralBonusAmount: rewardPerReferral,
+      totalInvitesSent: user.referralInvitedCount || joinedCount,
+      joinedCount,
+      joinedTechnicians: joinedTechniciansCount,
+      joinedCustomers: joinedCustomersCount,
+      totalReferralBonusEarned: totalBonusEarned,
+      pendingEarnings: pendingEarned,
+      joinedList: joinedUsers,
       stats: {
-        invitedCount,
+        invitedCount: user.referralInvitedCount || joinedCount,
         joinedCount,
-        earnedAmount: totalEarned,
+        earnedAmount: totalBonusEarned,
       },
-      referralsList,
+      referralsList: joinedUsers,
     };
   }
 

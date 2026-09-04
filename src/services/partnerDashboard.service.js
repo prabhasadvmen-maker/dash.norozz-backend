@@ -643,18 +643,32 @@ export class PartnerDashboardService {
   async getReferralData(partner) {
     const { SystemSettings } = await import('../models/systemSettings.model.js');
     const { User } = await import('../models/user.model.js');
+    const { ROLES } = await import('../constants/roles.constant.js');
+
     let settings = await SystemSettings.findOne({ key: 'global_settings' });
     const bonusAmount = settings?.referralBonusAmount ?? 500;
 
-    const refCode = partner.referralCode || `NRZ-REF-${partner._id.toString().slice(-6).toUpperCase()}`;
+    let refCode = partner.referralCode;
+    if (!refCode) {
+      refCode = `NRZ-REF-${(partner.phone || partner._id.toString()).slice(-6).toUpperCase()}`;
+      await User.updateOne({ _id: partner._id }, { referralCode: refCode }).catch(() => {});
+    }
 
-    // Query partners registered using this partner's referral code
-    const joinedPartners = await User.find({
-      role: ROLES.PARTNER,
-      $or: [{ referredBy: refCode }, { referralCodeUsed: refCode }],
-    }).select('name email phone status kycStatus createdAt').lean();
+    // Query ALL users (Customers & Technicians) registered using this partner's referral code or ObjectId
+    const joinedUsers = await User.find({
+      $or: [
+        { referredBy: refCode },
+        { referralCodeUsed: refCode },
+        { referredByPartner: partner._id },
+      ],
+    })
+      .select('name userId phone email role status kycStatus referralBonusStatus createdAt')
+      .sort({ createdAt: -1 })
+      .lean();
 
-    const joinedCount = joinedPartners.length;
+    const joinedCount = joinedUsers.length;
+    const joinedTechniciansCount = joinedUsers.filter((u) => u.role === ROLES.PARTNER).length;
+    const joinedCustomersCount = joinedUsers.filter((u) => u.role === ROLES.CUSTOMER).length;
 
     // Calculate Referral Bonus Earned from Wallet Transactions
     const referralTxns = await WalletTransaction.find({
@@ -663,16 +677,20 @@ export class PartnerDashboardService {
     }).lean();
 
     const totalBonusEarned = referralTxns.reduce((sum, t) => sum + (t.amount || 0), 0);
-    const pendingEarned = Math.max(0, (joinedCount * bonusAmount) - totalBonusEarned);
+    const creditedCount = joinedUsers.filter((p) => p.referralBonusStatus === 'credited').length;
+    const pendingCount = joinedCount - creditedCount;
+    const pendingEarned = pendingCount * bonusAmount;
 
     return {
       referralCode: refCode,
       referralBonusAmount: bonusAmount,
       totalInvitesSent: joinedCount,
-      joinedTechnicians: joinedCount,
+      joinedCount,
+      joinedTechnicians: joinedTechniciansCount,
+      joinedCustomers: joinedCustomersCount,
       totalReferralBonusEarned: totalBonusEarned,
       pendingEarnings: pendingEarned,
-      joinedList: joinedPartners,
+      joinedList: joinedUsers,
     };
   }
 }

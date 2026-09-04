@@ -289,13 +289,23 @@ export class PartnerAuthService {
     const allowedFields = [
       'name', 'email', 'agencyName', 'dob', 'gender',
       'assignedCity', 'city', 'category', 'address', 'profileImage',
-      'bankDetails', 'experience', 'workRadius', 'localities', 'workingHours', 'referralCode'
+      'bankDetails', 'experience', 'workRadius', 'localities', 'workingHours', 'referralCode', 'referredBy', 'usedReferralCode'
     ];
     const sanitizedData = {};
 
     for (const field of allowedFields) {
       if (updateData[field] !== undefined) {
         sanitizedData[field] = updateData[field];
+      }
+    }
+
+    const inputRefCode = updateData.referredBy || updateData.usedReferralCode || updateData.referralCodeUsed;
+    if (inputRefCode && !partner.referredByPartner) {
+      const cleanRefCode = String(inputRefCode).trim().toUpperCase();
+      const referrer = await User.findOne({ referralCode: cleanRefCode });
+      if (referrer && referrer._id.toString() !== partnerId.toString()) {
+        sanitizedData.referredBy = cleanRefCode;
+        sanitizedData.referredByPartner = referrer._id;
       }
     }
 

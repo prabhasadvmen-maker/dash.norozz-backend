@@ -315,6 +315,9 @@ const userSchema = new mongoose.Schema(
     },
     referralCode: { type: String, default: '' },
     referralEarnings: { type: Number, default: 0 },
+    referredBy: { type: String, default: '' },
+    referredByPartner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    referralBonusStatus: { type: String, enum: ['pending', 'credited'], default: 'pending' },
     walletBalance: { type: Number, default: 0 },
     securityDeposit: { type: Number, default: 0 },
     // Advanced Financial Wallet Buckets (Customer & Partner)
