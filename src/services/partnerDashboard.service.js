@@ -706,6 +706,123 @@ export class PartnerDashboardService {
       joinedList: joinedUsers,
     };
   }
+
+  // 12. PARTNER OFFERED SERVICES (FETCH DYNAMIC EXTRA SERVICES LIST)
+  async getOfferedServices(partnerUser, query = {}) {
+    const { User } = await import('../models/user.model.js');
+    const { Service } = await import('../models/service.model.js');
+    const { ServicePackage } = await import('../models/servicePackage.model.js');
+    const { Booking } = await import('../models/booking.model.js');
+
+    const offeredList = [];
+
+    // 1. Fetch full partner user with offeredServices
+    const partner = await User.findById(partnerUser._id).populate({
+      path: 'offeredServices',
+      populate: { path: 'category subCategory' }
+    });
+
+    let booking = null;
+    if (query.bookingId) {
+      booking = await Booking.findById(query.bookingId).populate('service category').lean();
+    }
+
+    // 2. If partner has explicit offeredServices configured
+    if (partner?.offeredServices && partner.offeredServices.length > 0) {
+      for (const srv of partner.offeredServices) {
+        if (srv.status === 'active' || !srv.status) {
+          const packages = await ServicePackage.find({ service: srv._id, status: 'active' }).lean();
+          if (packages.length > 0) {
+            packages.forEach(pkg => {
+              offeredList.push({
+                id: `pkg_${pkg._id}`,
+                serviceId: srv._id,
+                packageId: pkg._id,
+                name: `${srv.name} (${pkg.title})`,
+                title: pkg.title,
+                desc: pkg.description || srv.description || 'Professional add-on service package',
+                price: pkg.finalPrice || pkg.price || srv.finalPrice || srv.price || 499,
+                finalPrice: pkg.finalPrice || pkg.price || srv.finalPrice || srv.price || 499,
+                category: srv.category?.name || 'Authorized Offered Service'
+              });
+            });
+          } else {
+            offeredList.push({
+              id: `srv_${srv._id}`,
+              serviceId: srv._id,
+              packageId: null,
+              name: srv.name,
+              title: 'Standard',
+              desc: srv.description || 'Standard extra service add-on',
+              price: srv.finalPrice || srv.price || 399,
+              finalPrice: srv.finalPrice || srv.price || 399,
+              category: srv.category?.name || 'Authorized Offered Service'
+            });
+          }
+        }
+      }
+    }
+
+    // 3. If offeredList is empty or booking category query
+    if (offeredList.length === 0) {
+      const filter = { status: 'active' };
+      if (booking?.category?._id || booking?.category) {
+        filter.category = booking.category._id || booking.category;
+      }
+
+      const activeServices = await Service.find(filter).limit(10).lean();
+      for (const srv of activeServices) {
+        const packages = await ServicePackage.find({ service: srv._id, status: 'active' }).lean();
+        if (packages.length > 0) {
+          packages.forEach(pkg => {
+            offeredList.push({
+              id: `pkg_${pkg._id}`,
+              serviceId: srv._id,
+              packageId: pkg._id,
+              name: `${srv.name} (${pkg.title})`,
+              title: pkg.title,
+              desc: pkg.description || srv.description || 'Professional extra service package',
+              price: pkg.finalPrice || pkg.price || 499,
+              finalPrice: pkg.finalPrice || pkg.price || 499,
+              category: 'Catalog Offered Service'
+            });
+          });
+        } else {
+          offeredList.push({
+            id: `srv_${srv._id}`,
+            serviceId: srv._id,
+            packageId: null,
+            name: srv.name,
+            title: 'Standard',
+            desc: srv.description || 'Professional extra service add-on',
+            price: srv.finalPrice || srv.price || 399,
+            finalPrice: srv.finalPrice || srv.price || 399,
+            category: 'Catalog Offered Service'
+          });
+        }
+      }
+    }
+
+    // 4. Default Domain Fallbacks if less than 3
+    if (offeredList.length < 3) {
+      const bTitle = (booking?.serviceName || booking?.service?.name || '').toLowerCase();
+      if (bTitle.includes('salon') || bTitle.includes('hair') || bTitle.includes('beauty') || bTitle.includes('nail') || bTitle.includes('shave') || bTitle.includes('trim')) {
+        offeredList.push(
+          { id: 'off_salon_1', serviceId: null, packageId: null, name: '✨ Nail Art (Basic Nail Art)', title: 'Basic Nail Art', desc: 'Professional glitter & gel polish styling', price: 499, finalPrice: 499, category: 'Salon & Beauty' },
+          { id: 'off_salon_2', serviceId: null, packageId: null, name: '💆 Organic Herbal Hair Spa', title: 'Hair Spa', desc: 'Nourishing deep conditioning treatment', price: 799, finalPrice: 799, category: 'Salon & Beauty' },
+          { id: 'off_salon_3', serviceId: null, packageId: null, name: '✨ Fruit Facial Glow Clean-up', title: 'Fruit Facial', desc: 'Instant radiance & dead skin removal', price: 599, finalPrice: 599, category: 'Salon & Beauty' }
+        );
+      } else {
+        offeredList.push(
+          { id: 'off_ac_1', serviceId: null, packageId: null, name: '❄️ Refrigerant Gas Refill (R32)', title: 'Gas Refill', desc: 'Eco-friendly high cooling gas top-up', price: 1200, finalPrice: 1200, category: 'AC & Appliance' },
+          { id: 'off_ac_2', serviceId: null, packageId: null, name: '🧼 AC Foam Filter Deep Cleaning', title: 'Foam Wash', desc: 'Antibacterial jet spray foam wash', price: 400, finalPrice: 400, category: 'AC & Appliance' },
+          { id: 'off_ac_3', serviceId: null, packageId: null, name: '⚡ Voltage Stabilizer Health Audit', title: 'Stabilizer Check', desc: 'Safety fuse & voltage output testing', price: 200, finalPrice: 200, category: 'AC & Appliance' }
+        );
+      }
+    }
+
+    return offeredList;
+  }
 }
 
 export const partnerDashboardService = new PartnerDashboardService();

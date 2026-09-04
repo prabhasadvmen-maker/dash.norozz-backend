@@ -10,6 +10,11 @@ export class PartnerDashboardController extends BaseController {
     return this.sendSuccess(res, faqs, 'Partner FAQs retrieved successfully');
   });
 
+  getOfferedServices = asyncHandler(async (req, res) => {
+    const services = await partnerDashboardService.getOfferedServices(req.user, req.query);
+    return this.sendSuccess(res, services, 'Partner offered extra services retrieved successfully');
+  });
+
   claimJobOffer = asyncHandler(async (req, res) => {
     const result = await bookingService.claimJobOffer(req.params.id, req.user);
     return this.sendSuccess(res, result, result.message);
