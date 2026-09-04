@@ -478,6 +478,270 @@ export class SuperAdminService {
     await banner.save();
     return banner;
   }
+
+  // 6. FAQ MANAGEMENT
+  async getAllFaqs(query = {}) {
+    const { Faq } = await import('../models/faq.model.js');
+    
+    // Auto-seed default FAQs if DB has fewer items
+    const count = await Faq.countDocuments();
+    if (count < 10) {
+      if (count > 0 && count < 10) {
+        await Faq.deleteMany({});
+      }
+      await Faq.insertMany([
+        // Customer FAQs
+        {
+          question: 'How do I track my assigned service partner?',
+          answer: 'Once your booking is confirmed, you can track your assigned technician in real-time under the Active Bookings tab in your Norozz App.',
+          targetAudience: 'customer',
+          category: 'Booking & Order',
+          displayOrder: 1,
+        },
+        {
+          question: 'What is your refund policy if I cancel a booking?',
+          answer: 'Bookings can be cancelled free of cost up to 2 hours before the scheduled time slot. Refunds are credited instantly to your Norozz Wallet or back to your original payment method within 24 hours.',
+          targetAudience: 'customer',
+          category: 'Payment & Wallet',
+          displayOrder: 2,
+        },
+        {
+          question: 'How can I contact Norozz Live AI Assistant for quick answers?',
+          answer: 'You can open the Live AI Support Chat anytime from the Help Center or home screen banner to ask about service packages, pricing, booking status, or get instant recommendations.',
+          targetAudience: 'customer',
+          category: 'General',
+          displayOrder: 3,
+        },
+        {
+          question: 'Can I reschedule my service booking time slot?',
+          answer: 'Yes, you can reschedule your booking up to 2 hours before the scheduled start time directly from your My Bookings screen without any extra charges.',
+          targetAudience: 'customer',
+          category: 'Booking & Order',
+          displayOrder: 4,
+        },
+        {
+          question: 'What payment methods are supported on Norozz?',
+          answer: 'We support Credit/Debit Cards, Net Banking, UPI (Google Pay, PhonePe, Paytm), Norozz Customer Wallet, and Cash on Delivery (COD).',
+          targetAudience: 'customer',
+          category: 'Payment & Wallet',
+          displayOrder: 5,
+        },
+        {
+          question: 'What if I am not satisfied with the service quality?',
+          answer: 'We offer a 30-Day Satisfaction Guarantee! If you face any issues after completion, request a re-visit from My Bookings and a senior technician will resolve it free of charge.',
+          targetAudience: 'customer',
+          category: 'General',
+          displayOrder: 6,
+        },
+        {
+          question: 'How do promo codes and coupons work during checkout?',
+          answer: 'At checkout, tap on "Apply Promo Coupon Code" to view all available offers and select a active coupon for instant discounts on your booking total.',
+          targetAudience: 'customer',
+          category: 'Payment & Wallet',
+          displayOrder: 7,
+        },
+
+        // Partner FAQs
+        {
+          question: 'How do I get paid for completed partner jobs?',
+          answer: 'Earnings are calculated immediately after job completion and credited to your Partner Wallet upon customer OTP validation.',
+          targetAudience: 'partner',
+          category: 'Payments',
+          displayOrder: 8,
+        },
+        {
+          question: 'How do I accept a new booking request as a partner?',
+          answer: 'When a new booking request appears in your service area, your app will play a loud sound alert. Tap "Accept Booking" within 30 seconds to claim the job.',
+          targetAudience: 'partner',
+          category: 'Bookings',
+          displayOrder: 9,
+        },
+        {
+          question: 'How do I request a wallet withdrawal to my bank account?',
+          answer: 'Go to your Partner Wallet, enter the amount you wish to withdraw, select your verified bank account or UPI ID, and tap "Instant Withdraw". Funds settle within 2 hours.',
+          targetAudience: 'partner',
+          category: 'Payments',
+          displayOrder: 10,
+        },
+        {
+          question: 'What documents are required for partner onboarding?',
+          answer: 'You need a valid Aadhaar Card, PAN Card, Driving License (for vehicle services), Bank Account details, and a clear selfie photo for instant Zoop One KYC verification.',
+          targetAudience: 'partner',
+          category: 'General',
+          displayOrder: 11,
+        },
+        {
+          question: 'What if a customer cancels the booking after I arrive at the location?',
+          answer: 'If a customer cancels after you reach the location, a cancellation compensation fee is automatically credited to your Partner Wallet.',
+          targetAudience: 'partner',
+          category: 'Bookings',
+          displayOrder: 12,
+        },
+        {
+          question: 'How do high demand peak surge alerts work?',
+          answer: 'During peak hours or heavy demand, high-demand areas pay bonus surge fees per booking. Enable Peak Notifications in Settings to get real-time alerts.',
+          targetAudience: 'partner',
+          category: 'Technical',
+          displayOrder: 13,
+        },
+
+        // Both Audience FAQs
+        {
+          question: 'Are Norozz service partners background verified?',
+          answer: 'Yes! All Norozz service partners undergo 100% Aadhaar KYC verification, police background checks, and technical skill certifications before joining.',
+          targetAudience: 'both',
+          category: 'Account & Safety',
+          displayOrder: 14,
+        },
+        {
+          question: 'How does Norozz protect my privacy and personal details?',
+          answer: 'All user data and contact details are encrypted end-to-end. We never share your sensitive personal information with unauthorized third parties.',
+          targetAudience: 'both',
+          category: 'Account & Safety',
+          displayOrder: 15,
+        },
+        {
+          question: 'How can I reach Norozz support hotline?',
+          answer: 'Our customer & partner support team is available 24/7 via toll-free phone (1800-200-9090), WhatsApp Support, or in-app Live AI Chat.',
+          targetAudience: 'both',
+          category: 'General',
+          displayOrder: 16,
+        },
+      ]);
+    }
+
+    const filter = {};
+    if (query.targetAudience && query.targetAudience !== 'all') {
+      filter.targetAudience = { $in: [query.targetAudience, 'both'] };
+    }
+    if (query.search) {
+      filter.$or = [
+        { question: { $regex: query.search, $options: 'i' } },
+        { answer: { $regex: query.search, $options: 'i' } },
+        { category: { $regex: query.search, $options: 'i' } },
+      ];
+    }
+
+    return await Faq.find(filter).sort({ displayOrder: 1, createdAt: -1 });
+  }
+
+  async createFaq(data) {
+    const { Faq } = await import('../models/faq.model.js');
+    const { question, answer, targetAudience, category, displayOrder, isActive } = data;
+
+    if (!question || !answer) {
+      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Question and Answer are required');
+    }
+
+    const faq = await Faq.create({
+      question: String(question).trim(),
+      answer: String(answer).trim(),
+      targetAudience: targetAudience || 'both',
+      category: category ? String(category).trim() : 'General',
+      displayOrder: Number(displayOrder || 0),
+      isActive: isActive !== undefined ? Boolean(isActive) : true,
+    });
+
+    return faq;
+  }
+
+  async updateFaq(id, data) {
+    const { Faq } = await import('../models/faq.model.js');
+    const faq = await Faq.findById(id);
+    if (!faq) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'FAQ not found');
+    }
+
+    if (data.question !== undefined) faq.question = String(data.question).trim();
+    if (data.answer !== undefined) faq.answer = String(data.answer).trim();
+    if (data.targetAudience !== undefined) faq.targetAudience = data.targetAudience;
+    if (data.category !== undefined) faq.category = String(data.category).trim();
+    if (data.displayOrder !== undefined) faq.displayOrder = Number(data.displayOrder);
+    if (data.isActive !== undefined) faq.isActive = Boolean(data.isActive);
+
+    await faq.save();
+    return faq;
+  }
+
+  async deleteFaq(id) {
+    const { Faq } = await import('../models/faq.model.js');
+    const faq = await Faq.findByIdAndDelete(id);
+    if (!faq) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'FAQ not found');
+    }
+    return { message: 'FAQ deleted successfully' };
+  }
+
+  async toggleFaqStatus(id) {
+    const { Faq } = await import('../models/faq.model.js');
+    const faq = await Faq.findById(id);
+    if (!faq) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'FAQ not found');
+    }
+    faq.isActive = !faq.isActive;
+    await faq.save();
+    return faq;
+  }
+
+  // 7. CENTRAL SUPPORT TICKETS MANAGEMENT
+  async getAllTickets(query = {}) {
+    const { Ticket } = await import('../models/ticket.model.js');
+    const filter = {};
+
+    if (query.city && query.city !== 'all') {
+      filter.city = { $regex: new RegExp(`^${query.city}$`, 'i') };
+    }
+
+    if (query.status && query.status !== 'all') {
+      filter.status = query.status;
+    }
+
+    if (query.userType && query.userType !== 'all') {
+      filter.userType = query.userType;
+    }
+
+    if (query.search) {
+      filter.$or = [
+        { ticketId: { $regex: query.search, $options: 'i' } },
+        { subject: { $regex: query.search, $options: 'i' } },
+        { userName: { $regex: query.search, $options: 'i' } },
+        { userPhone: { $regex: query.search, $options: 'i' } },
+        { bookingId: { $regex: query.search, $options: 'i' } },
+        { city: { $regex: query.search, $options: 'i' } },
+      ];
+    }
+
+    return await Ticket.find(filter).sort({ createdAt: -1 });
+  }
+
+  async updateTicketStatus(id, updateData) {
+    const { Ticket } = await import('../models/ticket.model.js');
+    const ticket = await Ticket.findById(id);
+    if (!ticket) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Support ticket not found');
+    }
+
+    if (updateData.status) ticket.status = updateData.status;
+    if (updateData.adminNote !== undefined) ticket.adminNote = updateData.adminNote;
+    if (updateData.priority) ticket.priority = updateData.priority;
+
+    if (updateData.status === 'Resolved' || updateData.status === 'Closed') {
+      ticket.resolvedBy = updateData.resolvedBy || 'Super Admin';
+      ticket.resolvedAt = new Date();
+    }
+
+    await ticket.save();
+    return ticket;
+  }
+
+  async deleteTicket(id) {
+    const { Ticket } = await import('../models/ticket.model.js');
+    const ticket = await Ticket.findByIdAndDelete(id);
+    if (!ticket) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Support ticket not found');
+    }
+    return { message: 'Support ticket deleted successfully' };
+  }
 }
 
 export const superAdminService = new SuperAdminService();

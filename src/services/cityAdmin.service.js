@@ -332,6 +332,56 @@ export class CityAdminService {
       period: 'July 2026',
     };
   }
+
+  // 5. CITY SUPPORT TICKETS (Scoped to assignedCity Jurisdiction)
+  async getCityTickets(assignedCity, query = {}) {
+    const { Ticket } = await import('../models/ticket.model.js');
+    const targetCity = String(assignedCity || 'Delhi NCR').trim();
+
+    const filter = {};
+
+    if (query.status && query.status !== 'all') {
+      filter.status = query.status;
+    }
+
+    if (query.search) {
+      filter.$or = [
+        { ticketId: { $regex: query.search, $options: 'i' } },
+        { subject: { $regex: query.search, $options: 'i' } },
+        { userName: { $regex: query.search, $options: 'i' } },
+        { userPhone: { $regex: query.search, $options: 'i' } },
+        { bookingId: { $regex: query.search, $options: 'i' } },
+      ];
+    }
+
+    const tickets = await Ticket.find(filter).sort({ createdAt: -1 });
+
+    // Filter tickets by city match or default
+    return tickets.filter(t => {
+      if (!t.city) return true;
+      return String(t.city).toLowerCase() === targetCity.toLowerCase();
+    });
+  }
+
+  async updateCityTicketStatus(ticketId, updateData) {
+    const { Ticket } = await import('../models/ticket.model.js');
+    const ticket = await Ticket.findById(ticketId);
+    if (!ticket) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Support ticket not found');
+    }
+
+    if (updateData.status) ticket.status = updateData.status;
+    if (updateData.adminNote !== undefined) ticket.adminNote = updateData.adminNote;
+    if (updateData.priority) ticket.priority = updateData.priority;
+
+    if (updateData.status === 'Resolved' || updateData.status === 'Closed') {
+      ticket.resolvedBy = updateData.resolvedBy || 'City Admin';
+      ticket.resolvedAt = new Date();
+    }
+
+    await ticket.save();
+    return ticket;
+  }
 }
 
 export const cityAdminService = new CityAdminService();

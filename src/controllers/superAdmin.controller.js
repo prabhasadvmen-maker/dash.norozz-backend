@@ -122,6 +122,48 @@ export class SuperAdminController extends BaseController {
     const banner = await superAdminService.toggleBannerStatus(req.params.id);
     return this.sendSuccess(res, banner, `Banner ${banner.isActive ? 'activated' : 'deactivated'} successfully`);
   });
+
+  // 6. FAQ MANAGEMENT
+  getAllFaqs = asyncHandler(async (req, res) => {
+    const faqs = await superAdminService.getAllFaqs(req.query);
+    return this.sendSuccess(res, faqs, 'FAQs retrieved successfully');
+  });
+
+  createFaq = asyncHandler(async (req, res) => {
+    const faq = await superAdminService.createFaq(req.body);
+    return this.sendSuccess(res, faq, 'FAQ created successfully', HTTP_STATUS.CREATED);
+  });
+
+  updateFaq = asyncHandler(async (req, res) => {
+    const faq = await superAdminService.updateFaq(req.params.id, req.body);
+    return this.sendSuccess(res, faq, 'FAQ updated successfully');
+  });
+
+  deleteFaq = asyncHandler(async (req, res) => {
+    const result = await superAdminService.deleteFaq(req.params.id);
+    return this.sendSuccess(res, result, result.message);
+  });
+
+  toggleFaqStatus = asyncHandler(async (req, res) => {
+    const faq = await superAdminService.toggleFaqStatus(req.params.id);
+    return this.sendSuccess(res, faq, `FAQ ${faq.isActive ? 'activated' : 'deactivated'} successfully`);
+  });
+
+  // 7. SUPPORT TICKETS MANAGEMENT
+  getAllTickets = asyncHandler(async (req, res) => {
+    const tickets = await superAdminService.getAllTickets(req.query);
+    return this.sendSuccess(res, tickets, 'Support tickets retrieved successfully');
+  });
+
+  updateTicketStatus = asyncHandler(async (req, res) => {
+    const ticket = await superAdminService.updateTicketStatus(req.params.id, req.body);
+    return this.sendSuccess(res, ticket, 'Ticket status updated successfully');
+  });
+
+  deleteTicket = asyncHandler(async (req, res) => {
+    const result = await superAdminService.deleteTicket(req.params.id);
+    return this.sendSuccess(res, result, result.message);
+  });
 }
 
 export const superAdminController = new SuperAdminController();

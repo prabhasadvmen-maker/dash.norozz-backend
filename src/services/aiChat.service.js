@@ -8,7 +8,13 @@ export class AiChatService {
   constructor() {
     this.apiKey = process.env.GROQ_API_KEY || '';
     this.apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
-    this.models = ['llama-3.3-70b-versatile', 'llama3-8b-8192', 'mixtral-8x7b-32768'];
+    this.models = [
+      'groq/compound',
+      'groq/compound-mini',
+      'openai/gpt-oss-120b',
+      'openai/gpt-oss-20b',
+      'qwen/qwen3.8-27b'
+    ];
   }
 
   async getChatHistory(user, limit = 50) {
@@ -97,14 +103,14 @@ export class AiChatService {
   async getDbServicesForQuery(prompt) {
     try {
       // Ensure Category schema is registered in Mongoose for populate
-      await Category.findOne().limit(1).catch(() => {});
+      await Category.findOne().limit(1).catch(() => { });
 
       const cleanPrompt = (prompt || '').toLowerCase();
-      
+
       const stopWords = new Set([
-        'kya', 'hai', 'the', 'and', 'for', 'kaise', 'book', 'bhai', 'batao', 'chahiye', 
-        'price', 'kitna', 'kitne', 'cost', 'charge', 'rate', 'wala', 'wali', 'karo', 
-        'mujhe', 'ko', 'par', 'per', 'how', 'much', 'what', 'is', 'are', 'in', 'on', 
+        'kya', 'hai', 'the', 'and', 'for', 'kaise', 'book', 'bhai', 'batao', 'chahiye',
+        'price', 'kitna', 'kitne', 'cost', 'charge', 'rate', 'wala', 'wali', 'karo',
+        'mujhe', 'ko', 'par', 'per', 'how', 'much', 'what', 'is', 'are', 'in', 'on',
         'of', 'to', 'me', 'pe', 'tell', 'show', 'give', 'list', 'please', 'sir', 'need', 'want'
       ]);
 
@@ -298,7 +304,7 @@ Example format inside response:
     if (matchedServices && matchedServices.length > 0) {
       const s = matchedServices[0];
       const catName = s.category?.name || 'Home Services';
-      
+
       let fallbackImage = (s.thumbnail && s.thumbnail.startsWith('http') && !s.thumbnail.includes('loremflickr')) ? s.thumbnail : null;
       if (!fallbackImage) {
         const lowerCat = catName.toLowerCase();
@@ -435,14 +441,16 @@ Example format inside response:
     let lastError = null;
     let finalResult = null;
 
-    if (this.apiKey && this.apiKey.trim() && !this.apiKey.includes('placeholder')) {
+    const currentApiKey = (process.env.GROQ_API_KEY || this.apiKey || '').trim();
+
+    if (currentApiKey && !currentApiKey.includes('placeholder')) {
       for (const modelName of this.models) {
         try {
           const response = await fetch(this.apiUrl, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${this.apiKey}`
+              'Authorization': `Bearer ${currentApiKey}`
             },
             body: JSON.stringify({
               model: modelName,

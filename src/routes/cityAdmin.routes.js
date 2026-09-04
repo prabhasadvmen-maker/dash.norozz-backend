@@ -34,4 +34,8 @@ router.get('/bookings', cityAdminController.getBookings);
 router.patch('/bookings/:id/assign', assignBookingRules, validate, cityAdminController.assignBooking);
 router.patch('/bookings/:id/cancel', cancelBookingRules, validate, cityAdminController.cancelBooking);
 
+// City Support Tickets Management (Assigned City Scope)
+router.get('/tickets', cityAdminController.getTickets);
+router.put('/tickets/:id', cityAdminController.updateTicketStatus);
+
 export default router;

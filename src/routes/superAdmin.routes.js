@@ -54,4 +54,16 @@ router.put('/banners/:id', superAdminController.updateBanner);
 router.delete('/banners/:id', superAdminController.deleteBanner);
 router.patch('/banners/:id/status', superAdminController.toggleBannerStatus);
 
+// FAQ Management CRUD
+router.get('/faqs', superAdminController.getAllFaqs);
+router.post('/faqs', superAdminController.createFaq);
+router.put('/faqs/:id', superAdminController.updateFaq);
+router.delete('/faqs/:id', superAdminController.deleteFaq);
+router.patch('/faqs/:id/status', superAdminController.toggleFaqStatus);
+
+// Support Ticket Management CRUD
+router.get('/tickets', superAdminController.getAllTickets);
+router.put('/tickets/:id', superAdminController.updateTicketStatus);
+router.delete('/tickets/:id', superAdminController.deleteTicket);
+
 export default router;

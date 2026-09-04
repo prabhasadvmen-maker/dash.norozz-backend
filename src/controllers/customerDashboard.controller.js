@@ -9,6 +9,11 @@ export class CustomerDashboardController extends BaseController {
     return this.sendSuccess(res, data, 'Customer Mobile Home Feed retrieved successfully');
   });
 
+  getFaqs = asyncHandler(async (req, res) => {
+    const faqs = await customerDashboardService.getFaqs();
+    return this.sendSuccess(res, faqs, 'Customer FAQs retrieved successfully');
+  });
+
   getBanners = asyncHandler(async (req, res) => {
     const banners = await customerDashboardService.getBanners();
     return this.sendSuccess(res, banners, 'Customer promotional banners retrieved successfully');
@@ -122,6 +127,16 @@ export class CustomerDashboardController extends BaseController {
     const { message } = req.body;
     const result = await aiChatService.getChatCompletion(req.user, message);
     return this.sendSuccess(res, result, 'Norozz AI response generated successfully');
+  });
+
+  createTicket = asyncHandler(async (req, res) => {
+    const ticket = await customerDashboardService.createTicket(req.user?._id, req.body);
+    return this.sendCreated(res, ticket, 'Support ticket submitted successfully!');
+  });
+
+  getUserTickets = asyncHandler(async (req, res) => {
+    const tickets = await customerDashboardService.getUserTickets(req.user?._id);
+    return this.sendSuccess(res, tickets, 'Customer tickets retrieved successfully');
   });
 }
 

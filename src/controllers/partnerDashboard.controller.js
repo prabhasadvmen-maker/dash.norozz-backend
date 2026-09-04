@@ -5,6 +5,11 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 
 export class PartnerDashboardController extends BaseController {
 
+  getFaqs = asyncHandler(async (req, res) => {
+    const faqs = await partnerDashboardService.getFaqs();
+    return this.sendSuccess(res, faqs, 'Partner FAQs retrieved successfully');
+  });
+
   claimJobOffer = asyncHandler(async (req, res) => {
     const result = await bookingService.claimJobOffer(req.params.id, req.user);
     return this.sendSuccess(res, result, result.message);

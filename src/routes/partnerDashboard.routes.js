@@ -15,8 +15,9 @@ const router = Router();
 router.use(verifyJWT);
 router.use(authorizeRoles(ROLES.PARTNER));
 
-// Dashboard Overview
+// Dashboard Overview & FAQs
 router.get('/dashboard', partnerDashboardController.getDashboard);
+router.get('/faqs', partnerDashboardController.getFaqs);
 
 // Booking Endpoints (Subject to KYC Approval Check)
 router.get('/bookings/today', partnerDashboardController.getTodayBookings);

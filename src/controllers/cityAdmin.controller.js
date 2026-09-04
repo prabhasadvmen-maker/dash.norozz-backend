@@ -79,6 +79,19 @@ export class CityAdminController extends BaseController {
     const revenue = await cityAdminService.getCityRevenue(assignedCity);
     return this.sendSuccess(res, revenue, `Revenue for city '${assignedCity}' retrieved successfully`);
   });
+
+  getTickets = asyncHandler(async (req, res) => {
+    const assignedCity = (typeof req.user.assignedCity === 'object' && req.user.assignedCity?.name)
+      ? req.user.assignedCity.name
+      : (req.user.assignedCity || req.user.city || 'Delhi NCR');
+    const tickets = await cityAdminService.getCityTickets(assignedCity, req.query);
+    return this.sendSuccess(res, tickets, `Support tickets for '${assignedCity}' retrieved successfully`);
+  });
+
+  updateTicketStatus = asyncHandler(async (req, res) => {
+    const ticket = await cityAdminService.updateCityTicketStatus(req.params.id, req.body);
+    return this.sendSuccess(res, ticket, 'Ticket status updated successfully');
+  });
 }
 
 export const cityAdminController = new CityAdminController();

@@ -15,6 +15,7 @@ router.use(authorizeRoles(ROLES.CUSTOMER));
 
 // Combined Home Feed & Catalogs
 router.get('/dashboard', customerDashboardController.getDashboard);
+router.get('/faqs', customerDashboardController.getFaqs);
 router.get('/banners', customerDashboardController.getBanners);
 router.get('/categories', customerDashboardController.getCategories);
 router.get('/services/popular', customerDashboardController.getPopularServices);
@@ -49,5 +50,9 @@ router.get('/system-settings', customerDashboardController.getSystemSettings);
 router.get('/ai-chat/history', customerDashboardController.getAiChatHistory);
 router.delete('/ai-chat/history', customerDashboardController.clearAiChatHistory);
 router.post('/ai-chat', customerDashboardController.chatWithAi);
+
+// Support Ticket Endpoints
+router.get('/tickets', customerDashboardController.getUserTickets);
+router.post('/tickets', customerDashboardController.createTicket);
 
 export default router;

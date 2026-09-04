@@ -42,6 +42,19 @@ export class CustomerDashboardService {
     };
   }
 
+  async getFaqs() {
+    const { Faq } = await import('../models/faq.model.js');
+    const count = await Faq.countDocuments();
+    if (count < 10) {
+      const { superAdminService } = await import('./superAdmin.service.js');
+      await superAdminService.getAllFaqs();
+    }
+    return await Faq.find({
+      isActive: true,
+      targetAudience: { $in: ['customer', 'both'] }
+    }).sort({ displayOrder: 1, createdAt: -1 });
+  }
+
   async getBanners() {
     const { Banner } = await import('../models/banner.model.js');
     let banners = await Banner.find({ isActive: true }).sort({ displayOrder: 1, createdAt: -1 });
@@ -518,6 +531,40 @@ export class CustomerDashboardService {
       });
     }
     return settings;
+  }
+
+  async createTicket(userId, ticketData) {
+    const { Ticket } = await import('../models/ticket.model.js');
+    const { User } = await import('../models/user.model.js');
+
+    const user = userId ? await User.findById(userId) : null;
+    const ticketId = `TK-${Math.floor(100000 + Math.random() * 900000)}`;
+
+    const userCity = ticketData.city || user?.city || (typeof user?.assignedCity === 'string' ? user.assignedCity : user?.assignedCity?.name) || 'Delhi NCR';
+
+    const ticket = await Ticket.create({
+      ticketId,
+      user: userId || null,
+      userName: user?.name || ticketData.userName || 'Customer',
+      userPhone: user?.phone || ticketData.userPhone || '',
+      userEmail: user?.email || ticketData.userEmail || '',
+      userType: 'customer',
+      city: userCity,
+      category: ticketData.category || 'General',
+      bookingId: ticketData.bookingId || '',
+      subject: ticketData.subject,
+      description: ticketData.description || ticketData.message || '',
+      priority: ticketData.priority || 'Medium',
+      status: 'Open',
+    });
+
+    return ticket;
+  }
+
+  async getUserTickets(userId) {
+    const { Ticket } = await import('../models/ticket.model.js');
+    if (!userId) return [];
+    return await Ticket.find({ user: userId }).sort({ createdAt: -1 });
   }
 }
 

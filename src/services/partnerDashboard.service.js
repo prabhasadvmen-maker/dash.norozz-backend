@@ -24,6 +24,19 @@ export class PartnerDashboardService {
     }
   }
 
+  async getFaqs() {
+    const { Faq } = await import('../models/faq.model.js');
+    const count = await Faq.countDocuments();
+    if (count < 10) {
+      const { superAdminService } = await import('./superAdmin.service.js');
+      await superAdminService.getAllFaqs();
+    }
+    return await Faq.find({
+      isActive: true,
+      targetAudience: { $in: ['partner', 'both'] }
+    }).sort({ displayOrder: 1, createdAt: -1 });
+  }
+
   // 1. DASHBOARD OVERVIEW & CARDS
   async getDashboardOverview(partner) {
     if (!partner) {
