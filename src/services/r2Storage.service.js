@@ -73,13 +73,13 @@ export class R2StorageService {
   }
 
   /**
-   * Upload Base64 Image string to Cloudflare R2
+   * Upload Base64 Image or Video string to Cloudflare R2
    */
-  async uploadBase64Image(base64String, folder = 'profiles') {
+  async uploadBase64Media(base64String, folder = 'uploads') {
     try {
       if (!base64String || typeof base64String !== 'string') return null;
 
-      // If already an HTTP URL, return as is
+      // If already an HTTP/HTTPS URL, return as is
       if (base64String.startsWith('http://') || base64String.startsWith('https://')) {
         return base64String;
       }
@@ -91,15 +91,24 @@ export class R2StorageService {
 
       const mimeType = matches[1];
       const buffer = Buffer.from(matches[2], 'base64');
-      const ext = mimeType.split('/')[1] || 'png';
-      const fileName = `img_${Date.now()}.${ext}`;
+      const isVideo = mimeType.startsWith('video/');
+      const ext = mimeType.split('/')[1] || (isVideo ? 'mp4' : 'jpeg');
+      const prefix = isVideo ? 'vid' : 'img';
+      const fileName = `${prefix}_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}.${ext}`;
 
       const res = await this.uploadFile(buffer, fileName, mimeType, folder);
       return res.url;
     } catch (error) {
-      console.error('❌ Cloudflare R2 Base64 Upload Error:', error);
+      console.error('❌ Cloudflare R2 Base64 Media Upload Error:', error);
       return base64String;
     }
+  }
+
+  /**
+   * Upload Base64 Image string to Cloudflare R2
+   */
+  async uploadBase64Image(base64String, folder = 'profiles') {
+    return await this.uploadBase64Media(base64String, folder);
   }
 }
 

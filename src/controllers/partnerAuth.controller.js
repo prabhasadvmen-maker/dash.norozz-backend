@@ -125,6 +125,16 @@ export class PartnerAuthController extends BaseController {
     const result = await partnerAuthService.deleteCertification(req.user._id, req.params.certId);
     return this.sendSuccess(res, result, result.message);
   });
+
+  getOnboardingFee = asyncHandler(async (req, res) => {
+    const result = await partnerAuthService.getOnboardingFee();
+    return this.sendSuccess(res, result, 'Partner onboarding fee retrieved successfully');
+  });
+
+  payOnboardingFee = asyncHandler(async (req, res) => {
+    const result = await partnerAuthService.payOnboardingFee(req.user._id, req.body || {});
+    return this.sendSuccess(res, result, result.message);
+  });
 }
 
 export const partnerAuthController = new PartnerAuthController();

@@ -27,7 +27,7 @@ const walletTransactionSchema = new mongoose.Schema(
     },
     category: {
       type: String,
-      enum: ['Added to Wallet', 'Deposit', 'Service Booking', 'Refund', 'Job Earnings', 'Referral Bonus', 'Bank Withdrawal', 'Security Deposit', 'Surge Bonus'],
+      enum: ['Added to Wallet', 'Deposit', 'Service Booking', 'Refund', 'Job Earnings', 'Referral Bonus', 'Bank Withdrawal', 'Security Deposit', 'Surge Bonus', 'Cancellation Penalty', 'Onboarding Fee'],
       default: 'Added to Wallet',
     },
     title: {

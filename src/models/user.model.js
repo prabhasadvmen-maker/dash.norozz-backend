@@ -318,6 +318,12 @@ const userSchema = new mongoose.Schema(
     referredBy: { type: String, default: '' },
     referredByPartner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     referralBonusStatus: { type: String, enum: ['pending', 'credited'], default: 'pending' },
+    // Partner Onboarding Fee Payment Tracking
+    isOnboardingFeePaid: { type: Boolean, default: false },
+    onboardingFeeAmount: { type: Number, default: 0 },
+    onboardingPaymentStatus: { type: String, enum: ['pending', 'completed'], default: 'pending' },
+    onboardingPaymentId: { type: String, default: '' },
+    onboardingPaymentDate: { type: Date, default: null },
     walletBalance: { type: Number, default: 0 },
     securityDeposit: { type: Number, default: 0 },
     // Advanced Financial Wallet Buckets (Customer & Partner)

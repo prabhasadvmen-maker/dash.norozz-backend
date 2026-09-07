@@ -61,4 +61,8 @@ router.post('/onboarding/working-hours', verifyJWT, onboardingWorkingHoursRules,
 router.post('/certifications', verifyJWT, upload.single('certificateFile'), partnerAuthController.addCertification);
 router.delete('/certifications/:certId', verifyJWT, partnerAuthController.deleteCertification);
 
+// Onboarding Fee Endpoints
+router.get('/onboarding-fee', partnerAuthController.getOnboardingFee);
+router.post('/onboarding/pay-fee', verifyJWT, partnerAuthController.payOnboardingFee);
+
 export default router;

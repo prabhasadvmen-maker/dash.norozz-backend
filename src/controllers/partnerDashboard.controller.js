@@ -50,6 +50,11 @@ export class PartnerDashboardController extends BaseController {
     return this.sendSuccess(res, data, 'Partner Dashboard overview retrieved successfully');
   });
 
+  getAnalytics = asyncHandler(async (req, res) => {
+    const data = await partnerDashboardService.getAnalytics(req.user, req.query);
+    return this.sendSuccess(res, data, 'Partner performance & revenue analytics retrieved successfully');
+  });
+
   getTodayBookings = asyncHandler(async (req, res) => {
     const bookings = await partnerDashboardService.getTodayBookings(req.user);
     return this.sendSuccess(res, bookings, "Today's bookings retrieved successfully");
@@ -173,6 +178,11 @@ export class PartnerDashboardController extends BaseController {
   getReferralData = asyncHandler(async (req, res) => {
     const data = await partnerDashboardService.getReferralData(req.user);
     return this.sendSuccess(res, data, 'Partner referral data retrieved successfully');
+  });
+
+  cancelAcceptedBooking = asyncHandler(async (req, res) => {
+    const result = await partnerDashboardService.cancelAcceptedBooking(req.user, req.params.id, req.body);
+    return this.sendSuccess(res, result, result.message);
   });
 }
 

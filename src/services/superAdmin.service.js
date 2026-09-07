@@ -246,7 +246,7 @@ export class SuperAdminService {
   // 5. COUPON MANAGEMENT SYSTEM (CRUD)
   async getAllCoupons() {
     const { Coupon } = await import('../models/coupon.model.js');
-    return await Coupon.find({}).sort({ createdAt: -1 });
+    return await Coupon.find({}).populate('applicableCategory', 'name icon slug').sort({ createdAt: -1 });
   }
 
   async createCoupon(data) {
@@ -256,10 +256,13 @@ export class SuperAdminService {
       throw new ApiError(HTTP_STATUS.BAD_REQUEST, `Coupon code '${data.code.toUpperCase()}' already exists`);
     }
 
+    const categoryVal = data.applicableCategory && String(data.applicableCategory).trim() !== '' ? data.applicableCategory : null;
+
     const coupon = await Coupon.create({
       code: data.code.toUpperCase(),
       title: data.title,
       description: data.description || '',
+      applicableCategory: categoryVal,
       discountType: data.discountType || 'fixed',
       discountValue: Number(data.discountValue),
       maxDiscountAmount: data.maxDiscountAmount ? Number(data.maxDiscountAmount) : null,
@@ -269,9 +272,11 @@ export class SuperAdminService {
       isActive: data.isActive !== undefined ? Boolean(data.isActive) : true,
     });
 
+    const populatedCoupon = await Coupon.findById(coupon._id).populate('applicableCategory', 'name icon slug');
+
     return {
       message: 'Coupon created successfully!',
-      coupon,
+      coupon: populatedCoupon || coupon,
     };
   }
 
@@ -292,6 +297,9 @@ export class SuperAdminService {
 
     if (data.title !== undefined) coupon.title = data.title;
     if (data.description !== undefined) coupon.description = data.description;
+    if (data.applicableCategory !== undefined) {
+      coupon.applicableCategory = data.applicableCategory && String(data.applicableCategory).trim() !== '' ? data.applicableCategory : null;
+    }
     if (data.discountType !== undefined) coupon.discountType = data.discountType;
     if (data.discountValue !== undefined) coupon.discountValue = Number(data.discountValue);
     if (data.maxDiscountAmount !== undefined) coupon.maxDiscountAmount = data.maxDiscountAmount ? Number(data.maxDiscountAmount) : null;
@@ -301,9 +309,11 @@ export class SuperAdminService {
     if (data.isActive !== undefined) coupon.isActive = Boolean(data.isActive);
 
     await coupon.save();
+    const updatedPopulated = await Coupon.findById(coupon._id).populate('applicableCategory', 'name icon slug');
+
     return {
       message: 'Coupon updated successfully!',
-      coupon,
+      coupon: updatedPopulated || coupon,
     };
   }
 
@@ -326,6 +336,8 @@ export class SuperAdminService {
         customerPlatformFeePercent: 5,
         partnerPlatformFeePercent: 10,
         referralBonusAmount: 500,
+        partnerCancellationPenaltyAmount: 100,
+        maxDailyFreeCancellations: 3,
         currency: 'INR',
       });
     } else {
@@ -336,6 +348,18 @@ export class SuperAdminService {
       }
       if (settings.partnerPlatformFeePercent === undefined || settings.partnerPlatformFeePercent === null) {
         settings.partnerPlatformFeePercent = 10;
+        updated = true;
+      }
+      if (settings.partnerCancellationPenaltyAmount === undefined || settings.partnerCancellationPenaltyAmount === null) {
+        settings.partnerCancellationPenaltyAmount = 100;
+        updated = true;
+      }
+      if (settings.maxDailyFreeCancellations === undefined || settings.maxDailyFreeCancellations === null) {
+        settings.maxDailyFreeCancellations = 3;
+        updated = true;
+      }
+      if (settings.partnerOnboardingFee === undefined || settings.partnerOnboardingFee === null) {
+        settings.partnerOnboardingFee = 999;
         updated = true;
       }
       if (updated) {
@@ -357,6 +381,15 @@ export class SuperAdminService {
     }
     if (data.referralBonusAmount !== undefined && data.referralBonusAmount !== '') {
       update.referralBonusAmount = Number(data.referralBonusAmount);
+    }
+    if (data.partnerCancellationPenaltyAmount !== undefined && data.partnerCancellationPenaltyAmount !== '') {
+      update.partnerCancellationPenaltyAmount = Number(data.partnerCancellationPenaltyAmount);
+    }
+    if (data.maxDailyFreeCancellations !== undefined && data.maxDailyFreeCancellations !== '') {
+      update.maxDailyFreeCancellations = Number(data.maxDailyFreeCancellations);
+    }
+    if (data.partnerOnboardingFee !== undefined && data.partnerOnboardingFee !== '') {
+      update.partnerOnboardingFee = Number(data.partnerOnboardingFee);
     }
     if (data.currency !== undefined) {
       update.currency = data.currency;

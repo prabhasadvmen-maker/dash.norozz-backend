@@ -84,6 +84,9 @@ export const getPartnerOnboardingStatus = (user) => {
     (hasAadhaar && hasOtherKycDoc)
   );
 
+  // 8. Onboarding Fee Payment Check
+  const isOnboardingFeePaid = Boolean(user.isOnboardingFeePaid);
+
   // Check if ALL steps are TRUE
   const isAllCompleted = Boolean(
     isPhoneVerified &&
@@ -92,14 +95,15 @@ export const getPartnerOnboardingStatus = (user) => {
     isCategorySelected &&
     isSkillsUpdated &&
     isServiceAreaSet &&
-    isDocumentsUploaded
+    isDocumentsUploaded &&
+    isOnboardingFeePaid
   );
 
   const isKycSubmitted = Boolean(user.isKycSubmitted || isAllCompleted);
   const kycStatus = user.kycStatus || 'pending';
 
   // Compute next step strictly in requested order:
-  // VERIFY_OTP ➔ CREATE_PROFILE ➔ UPLOAD_LOCATION ➔ SELECT_CATEGORY ➔ UPDATE_SKILLS_EXPERIENCE ➔ UPLOAD_SERVICE_AREA ➔ UPLOAD_DOCUMENTS ➔ DONE
+  // VERIFY_OTP ➔ CREATE_PROFILE ➔ UPLOAD_LOCATION ➔ SELECT_CATEGORY ➔ UPDATE_SKILLS_EXPERIENCE ➔ UPLOAD_SERVICE_AREA ➔ UPLOAD_DOCUMENTS ➔ PAY_ONBOARDING_FEE ➔ DONE
   let nextStep = 'REQUEST_OTP';
 
   if (!isPhoneVerified) {
@@ -116,6 +120,8 @@ export const getPartnerOnboardingStatus = (user) => {
     nextStep = 'UPLOAD_SERVICE_AREA';
   } else if (!isDocumentsUploaded) {
     nextStep = 'UPLOAD_DOCUMENTS';
+  } else if (!isOnboardingFeePaid) {
+    nextStep = 'PAY_ONBOARDING_FEE';
   } else {
     nextStep = 'DONE';
   }
@@ -130,6 +136,7 @@ export const getPartnerOnboardingStatus = (user) => {
       isSkillsUpdated,
       isServiceAreaSet,
       isDocumentsUploaded,
+      isOnboardingFeePaid,
       isAllCompleted,
       isKycSubmitted,
       kycStatus,
@@ -1153,6 +1160,96 @@ export class PartnerAuthService {
       user: obj,
       nextStep: statusInfo.nextStep,
       onboardingStatus: statusInfo.onboardingStatus,
+    };
+  }
+
+  // 10. GET ONBOARDING FEE CONFIGURATION
+  async getOnboardingFee() {
+    const { SystemSettings } = await import('../models/systemSettings.model.js');
+    const settings = await SystemSettings.findOne({ key: 'global_settings' });
+    const fee = settings?.partnerOnboardingFee ?? 999;
+    const baseFee = Math.round((fee / 1.18) * 100) / 100;
+    const gstFee = Math.round((fee - baseFee) * 100) / 100;
+
+    return {
+      totalAmount: fee,
+      baseRegistrationFee: baseFee,
+      gstAmount: gstFee,
+      currency: settings?.currency || 'INR',
+      whatsIncluded: [
+        {
+          id: 1,
+          title: 'Background & Document Verification',
+          description: 'Secure background check and government database verification.',
+        },
+        {
+          id: 2,
+          title: 'Professional Skill Certification',
+          description: 'Digital badge and service certificate to boost customer trust.',
+        },
+        {
+          id: 3,
+          title: 'Partner Training & Support',
+          description: 'Access to training modules and priority 24/7 partner support.',
+        },
+      ],
+    };
+  }
+
+  // 11. PROCESS PARTNER ONBOARDING FEE PAYMENT
+  async payOnboardingFee(partnerId, paymentDetails = {}) {
+    const partner = await userRepository.findById(partnerId);
+    if (!partner || partner.role !== ROLES.PARTNER) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner account not found');
+    }
+
+    const { SystemSettings } = await import('../models/systemSettings.model.js');
+    const settings = await SystemSettings.findOne({ key: 'global_settings' });
+    const fee = settings?.partnerOnboardingFee ?? 999;
+
+    partner.isOnboardingFeePaid = true;
+    partner.onboardingFeeAmount = fee;
+    partner.onboardingPaymentStatus = 'completed';
+    partner.onboardingPaymentId = paymentDetails.paymentId || `PAY-ONB-${Math.floor(100000 + Math.random() * 900000)}`;
+    partner.onboardingPaymentDate = new Date();
+    partner.isKycSubmitted = true;
+
+    await partner.save({ validateBeforeSave: false });
+
+    // Record transaction log in WalletTransaction
+    try {
+      const { WalletTransaction } = await import('../models/walletTransaction.model.js');
+      const txnId = `TXN-ONB-${Math.floor(100000 + Math.random() * 900000)}`;
+      await WalletTransaction.create({
+        transactionId: txnId,
+        partnerId: partner._id,
+        type: 'Debit',
+        category: 'Added to Wallet',
+        title: 'One-Time Partner Account Onboarding & Registration Fee',
+        amount: fee,
+        status: 'Completed',
+      });
+    } catch (txnErr) {
+      console.warn('Onboarding fee wallet transaction log notice:', txnErr);
+    }
+
+    const obj = partner.toObject();
+    delete obj.password;
+    delete obj.refreshToken;
+
+    const statusInfo = getPartnerOnboardingStatus(partner);
+
+    return {
+      message: `₹${fee} One-Time Onboarding Fee paid successfully! Account registration complete.`,
+      user: obj,
+      nextStep: statusInfo.nextStep,
+      onboardingStatus: statusInfo.onboardingStatus,
+      paymentDetails: {
+        amount: fee,
+        paymentId: partner.onboardingPaymentId,
+        paymentDate: partner.onboardingPaymentDate,
+        status: 'completed',
+      },
     };
   }
 }

@@ -59,6 +59,14 @@ const serviceSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    videos: {
+      type: [String],
+      default: [],
+    },
+    videoUrl: {
+      type: String,
+      default: '',
+    },
     status: {
       type: String,
       enum: ['active', 'inactive', 'deleted'],

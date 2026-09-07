@@ -5,12 +5,12 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 export class ServiceController extends BaseController {
 
   createService = asyncHandler(async (req, res) => {
-    const service = await serviceService.createService(req.body, req.user._id);
+    const service = await serviceService.createService(req.body, req.user._id, req.files);
     return this.sendCreated(res, service, 'Service created successfully');
   });
 
   updateService = asyncHandler(async (req, res) => {
-    const updated = await serviceService.updateService(req.params.id, req.body, req.user._id);
+    const updated = await serviceService.updateService(req.params.id, req.body, req.user._id, req.files);
     return this.sendSuccess(res, updated, 'Service updated successfully');
   });
 

@@ -18,6 +18,11 @@ const couponSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    applicableCategory: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Category',
+      default: null, // null means promo works on ALL categories / services
+    },
     discountType: {
       type: String,
       enum: ['percentage', 'fixed'],

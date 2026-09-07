@@ -38,7 +38,7 @@ export class ServiceService {
   }
 
   // 1. CREATE SERVICE
-  async createService(serviceData, createdById) {
+  async createService(serviceData, createdById, files = []) {
     // Validate Category
     const parentCategory = await categoryRepository.findById(serviceData.category);
     if (!parentCategory || parentCategory.status === 'deleted') {
@@ -54,15 +54,82 @@ export class ServiceService {
     const baseText = serviceData.slug || serviceData.name || 'service';
     const slug = await this.generateUniqueSlug(baseText);
 
-    let imageUrl = serviceData.thumbnail || serviceData.image || '';
-    if (imageUrl && imageUrl.startsWith('data:image/')) {
-      imageUrl = await r2StorageService.uploadBase64Image(imageUrl, 'services');
+    let galleryUrls = Array.isArray(serviceData.gallery) ? [...serviceData.gallery] : [];
+    let videoList = Array.isArray(serviceData.videos) ? [...serviceData.videos] : [];
+    if (serviceData.videoUrl && typeof serviceData.videoUrl === 'string' && serviceData.videoUrl.trim()) {
+      if (!videoList.includes(serviceData.videoUrl.trim())) {
+        videoList.push(serviceData.videoUrl.trim());
+      }
     }
+
+    // 1. Process Multer Buffer Files uploaded directly via FormData to R2
+    if (Array.isArray(files) && files.length > 0) {
+      for (const file of files) {
+        const isVideo = file.mimetype.startsWith('video/');
+        const folder = isVideo ? 'services/videos' : 'services/images';
+        const r2Res = await r2StorageService.uploadFile(file.buffer, file.originalname, file.mimetype, folder);
+        if (isVideo) {
+          videoList.push(r2Res.url);
+        } else {
+          galleryUrls.push(r2Res.url);
+        }
+      }
+    }
+
+    // 2. Process Base64 strings or URLs in gallery & videos to R2
+    const finalGallery = [];
+    for (const imgItem of galleryUrls) {
+      if (typeof imgItem === 'string' && imgItem.trim()) {
+        if (imgItem.startsWith('data:')) {
+          const isVideo = imgItem.startsWith('data:video/');
+          const folder = isVideo ? 'services/videos' : 'services/images';
+          const uploadedUrl = await r2StorageService.uploadBase64Media(imgItem, folder);
+          if (isVideo) {
+            videoList.push(uploadedUrl);
+          } else {
+            finalGallery.push(uploadedUrl);
+          }
+        } else {
+          finalGallery.push(imgItem);
+        }
+      }
+    }
+
+    const finalVideos = [];
+    for (const vItem of videoList) {
+      if (typeof vItem === 'string' && vItem.trim()) {
+        if (vItem.startsWith('data:')) {
+          const isImg = vItem.startsWith('data:image/');
+          const folder = isImg ? 'services/images' : 'services/videos';
+          const uploadedUrl = await r2StorageService.uploadBase64Media(vItem, folder);
+          if (isImg) {
+            finalGallery.push(uploadedUrl);
+          } else {
+            finalVideos.push(uploadedUrl);
+          }
+        } else {
+          finalVideos.push(vItem);
+        }
+      }
+    }
+
+    let imageUrl = serviceData.thumbnail || serviceData.image || '';
+    if (imageUrl && imageUrl.startsWith('data:')) {
+      imageUrl = await r2StorageService.uploadBase64Media(imageUrl, 'services/images');
+    }
+    if (!imageUrl && finalGallery.length > 0) {
+      imageUrl = finalGallery[0];
+    }
+
+    const primaryVideo = finalVideos.length > 0 ? finalVideos[0] : (serviceData.videoUrl || '');
 
     const service = await serviceRepository.create({
       ...serviceData,
       thumbnail: imageUrl,
       image: imageUrl,
+      gallery: finalGallery,
+      videos: finalVideos,
+      videoUrl: primaryVideo,
       slug,
       status: serviceData.status || 'active',
       createdBy: createdById,
@@ -75,7 +142,7 @@ export class ServiceService {
   }
 
   // 2. UPDATE SERVICE
-  async updateService(serviceId, updateData, updatedById) {
+  async updateService(serviceId, updateData, updatedById, files = []) {
     const service = await serviceRepository.findById(serviceId);
     if (!service || service.status === 'deleted') {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Service record not found');
@@ -96,8 +163,75 @@ export class ServiceService {
       updateData.slug = await this.generateUniqueSlug(baseText, serviceId);
     }
 
+    let galleryUrls = Array.isArray(updateData.gallery) ? [...updateData.gallery] : (service.gallery || []);
+    let videoList = Array.isArray(updateData.videos) ? [...updateData.videos] : (service.videos || []);
+
+    if (Array.isArray(files) && files.length > 0) {
+      for (const file of files) {
+        const isVideo = file.mimetype.startsWith('video/');
+        const folder = isVideo ? 'services/videos' : 'services/images';
+        const r2Res = await r2StorageService.uploadFile(file.buffer, file.originalname, file.mimetype, folder);
+        if (isVideo) {
+          videoList.push(r2Res.url);
+        } else {
+          galleryUrls.push(r2Res.url);
+        }
+      }
+    }
+
+    const finalGallery = [];
+    for (const imgItem of galleryUrls) {
+      if (typeof imgItem === 'string' && imgItem.trim()) {
+        if (imgItem.startsWith('data:')) {
+          const isVideo = imgItem.startsWith('data:video/');
+          const folder = isVideo ? 'services/videos' : 'services/images';
+          const uploadedUrl = await r2StorageService.uploadBase64Media(imgItem, folder);
+          if (isVideo) {
+            videoList.push(uploadedUrl);
+          } else {
+            finalGallery.push(uploadedUrl);
+          }
+        } else {
+          finalGallery.push(imgItem);
+        }
+      }
+    }
+
+    const finalVideos = [];
+    for (const vItem of videoList) {
+      if (typeof vItem === 'string' && vItem.trim()) {
+        if (vItem.startsWith('data:')) {
+          const isImg = vItem.startsWith('data:image/');
+          const folder = isImg ? 'services/images' : 'services/videos';
+          const uploadedUrl = await r2StorageService.uploadBase64Media(vItem, folder);
+          if (isImg) {
+            finalGallery.push(uploadedUrl);
+          } else {
+            finalVideos.push(uploadedUrl);
+          }
+        } else {
+          finalVideos.push(vItem);
+        }
+      }
+    }
+
+    let imageUrl = updateData.thumbnail || updateData.image || service.thumbnail || '';
+    if (imageUrl && imageUrl.startsWith('data:')) {
+      imageUrl = await r2StorageService.uploadBase64Media(imageUrl, 'services/images');
+    }
+    if (!imageUrl && finalGallery.length > 0) {
+      imageUrl = finalGallery[0];
+    }
+
+    const primaryVideo = finalVideos.length > 0 ? finalVideos[0] : (updateData.videoUrl || service.videoUrl || '');
+
     const updated = await serviceRepository.updateById(serviceId, {
       ...updateData,
+      thumbnail: imageUrl,
+      image: imageUrl,
+      gallery: finalGallery,
+      videos: finalVideos,
+      videoUrl: primaryVideo,
       updatedBy: updatedById,
     });
 

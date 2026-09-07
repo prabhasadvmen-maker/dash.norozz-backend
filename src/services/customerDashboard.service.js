@@ -106,7 +106,9 @@ export class CustomerDashboardService {
 
   async getOffers(customer) {
     const { Coupon } = await import('../models/coupon.model.js');
-    let coupons = await Coupon.find({ isActive: true }).sort({ createdAt: -1 });
+    let coupons = await Coupon.find({ isActive: true })
+      .populate('applicableCategory', 'name icon slug')
+      .sort({ createdAt: -1 });
 
     // Filter out coupons already used by this customer (if customer logged in)
     if (customer && customer._id) {
@@ -122,14 +124,14 @@ export class CustomerDashboardService {
 
   async applyCoupon(customer, data) {
     const { Coupon } = await import('../models/coupon.model.js');
-    const { code, bookingAmount } = data;
+    const { code, bookingAmount, categoryId, serviceId } = data;
 
     if (!code) {
       throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Please enter a valid coupon code.');
     }
 
     const cleanCode = String(code).trim().toUpperCase();
-    const coupon = await Coupon.findOne({ code: cleanCode, isActive: true });
+    const coupon = await Coupon.findOne({ code: cleanCode, isActive: true }).populate('applicableCategory', 'name slug');
 
     if (!coupon) {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, `Coupon code '${cleanCode}' is invalid or expired.`);
@@ -138,6 +140,30 @@ export class CustomerDashboardService {
     // Check Date Expiry
     if (coupon.validUntil && new Date() > new Date(coupon.validUntil)) {
       throw new ApiError(HTTP_STATUS.BAD_REQUEST, `Coupon code '${cleanCode}' has expired.`);
+    }
+
+    // Check Category Restriction (If coupon is assigned to a specific category)
+    if (coupon.applicableCategory) {
+      const couponCategoryObjId = String(coupon.applicableCategory._id || coupon.applicableCategory);
+      let serviceCatId = categoryId ? String(categoryId._id || categoryId) : null;
+
+      // If categoryId was not directly passed, lookup from Service model if serviceId is provided
+      if (!serviceCatId && serviceId) {
+        const { Service } = await import('../models/service.model.js');
+        const serviceObj = await Service.findById(serviceId).lean();
+        if (serviceObj && serviceObj.category) {
+          serviceCatId = String(serviceObj.category._id || serviceObj.category);
+        }
+      }
+
+      // If category is known and does not match, reject coupon application
+      if (serviceCatId && serviceCatId !== couponCategoryObjId) {
+        const categoryName = coupon.applicableCategory.name || 'this specific';
+        throw new ApiError(
+          HTTP_STATUS.BAD_REQUEST,
+          `Coupon '${cleanCode}' is valid ONLY for '${categoryName}' services and cannot be applied to this category.`
+        );
+      }
     }
 
     // Check Single-Use / Usage Limit Per User
@@ -183,6 +209,7 @@ export class CustomerDashboardService {
         title: coupon.title,
         discountType: coupon.discountType,
         discountValue: coupon.discountValue,
+        applicableCategory: coupon.applicableCategory ? { id: coupon.applicableCategory._id, name: coupon.applicableCategory.name } : null,
         discountAmount,
         finalAmount,
       },

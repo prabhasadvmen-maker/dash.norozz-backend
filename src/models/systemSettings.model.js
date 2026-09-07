@@ -19,6 +19,18 @@ const systemSettingsSchema = new mongoose.Schema(
       type: Number,
       default: 200,
     },
+    partnerCancellationPenaltyAmount: {
+      type: Number,
+      default: 100,
+    },
+    maxDailyFreeCancellations: {
+      type: Number,
+      default: 3,
+    },
+    partnerOnboardingFee: {
+      type: Number,
+      default: 999,
+    },
     currency: {
       type: String,
       default: 'INR',

@@ -194,6 +194,9 @@ export class BookingService {
     if (partnerUser.role !== ROLES.PARTNER) {
       throw new ApiError(HTTP_STATUS.FORBIDDEN, 'Only registered service partners can claim job offers.');
     }
+    if (partnerUser.status !== 'active') {
+      throw new ApiError(HTTP_STATUS.FORBIDDEN, 'Your account is disabled/suspended. Please contact City Admin to reactivate your account.');
+    }
     if (partnerUser.kycStatus !== 'approved') {
       throw new ApiError(HTTP_STATUS.FORBIDDEN, 'Your KYC account is under verification. Only approved partners can claim jobs.');
     }

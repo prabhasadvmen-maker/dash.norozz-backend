@@ -34,6 +34,18 @@ export const initSockets = (httpServer) => {
         const { partnerId, category, city } = data || {};
         if (!partnerId) return;
 
+        // Verify partner status in Database before joining job dispatch rooms
+        const partner = await userRepository.findById(partnerId);
+        if (!partner || partner.role !== ROLES.PARTNER || partner.status !== 'active' || partner.kycStatus !== 'approved') {
+          console.log(`⛔ Socket join_partner rejected for Partner ${partnerId}: Account is ${partner?.status || 'not active'} or KYC not approved`);
+          return socket.emit('partner_connected', {
+            success: false,
+            message: `Account is ${partner?.status || 'inactive'}. Please contact City Admin to activate your account.`,
+            partnerId,
+            status: partner?.status || 'disabled',
+          });
+        }
+
         socket.partnerId = partnerId;
         socket.partnerCategory = category || '';
         socket.partnerCity = city || 'Delhi NCR';
@@ -174,10 +186,10 @@ export const initSockets = (httpServer) => {
         }
 
         const partner = await userRepository.findById(partnerId);
-        if (!partner || partner.role !== ROLES.PARTNER || partner.kycStatus !== 'approved' || !partner.isOnline) {
+        if (!partner || partner.role !== ROLES.PARTNER || partner.kycStatus !== 'approved' || !partner.isOnline || partner.status !== 'active') {
           return socket.emit('claim_result', {
             success: false,
-            message: 'Only online approved partners can claim booking requests.',
+            message: 'Only active online approved partners can claim booking requests.',
           });
         }
 
@@ -413,6 +425,15 @@ export const dispatchNewJobOffer = async (booking) => {
     const eligiblePartners = partners.filter((partner) => {
       // 0. KYC Approval and Online Check
       if (!partner.isOnline || partner.kycStatus !== 'approved') return false;
+
+      // 0a. Exclude partners who previously cancelled/declined this booking
+      const excludedPartnerIds = Array.isArray(booking.cancelledByPartners)
+        ? booking.cancelledByPartners.map((p) => String(p._id || p))
+        : [];
+      if (excludedPartnerIds.includes(String(partner._id))) {
+        console.log(`⛔ Skipping partner [${partner.name}] for booking [${booking.bookingId || booking._id}]: Partner previously cancelled this booking.`);
+        return false;
+      }
 
       // 1. Category check
       const partnerCatId = partner.category?._id ? String(partner.category._id) : String(partner.category || '');

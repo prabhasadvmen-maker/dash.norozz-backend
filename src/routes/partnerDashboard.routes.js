@@ -15,8 +15,9 @@ const router = Router();
 router.use(verifyJWT);
 router.use(authorizeRoles(ROLES.PARTNER));
 
-// Dashboard Overview & FAQs
+// Dashboard Overview & Analytics
 router.get('/dashboard', partnerDashboardController.getDashboard);
+router.get('/analytics', partnerDashboardController.getAnalytics);
 router.get('/faqs', partnerDashboardController.getFaqs);
 // Offered Extra Services Catalog
 router.get('/offered-services', partnerDashboardController.getOfferedServices);
@@ -35,6 +36,7 @@ router.post('/bookings/:id/add-extra-service', partnerDashboardController.addExt
 router.get('/services/:serviceId/packages', partnerDashboardController.getServicePackages);
 router.get('/bookings/:id/payable-amount', partnerDashboardController.calculatePayableAmount);
 router.post('/bookings/:id/verify-extra-payment', partnerDashboardController.verifyExtraPayment);
+router.post('/bookings/:id/cancel', partnerDashboardController.cancelAcceptedBooking);
 
 // Wallet & Financials
 router.get('/wallet', partnerDashboardController.getWallet);
