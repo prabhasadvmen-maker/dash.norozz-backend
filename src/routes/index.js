@@ -49,7 +49,9 @@ router.use('/wallet', financialRoutes);
 router.use('/admin', financialRoutes);
 router.use('/reviews', reviewRoutes);
 router.use('/admin/reviews', reviewRoutes);
-router.use('/translation', translationRoutes);
-router.use('/location', locationRoutes);
+import publicPolicyRoutes from './publicPolicy.routes.js';
+
+router.use('/public', publicPolicyRoutes);
+router.use('/policies', publicPolicyRoutes);
 
 export default router;

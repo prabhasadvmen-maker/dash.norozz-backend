@@ -66,4 +66,11 @@ router.get('/tickets', superAdminController.getAllTickets);
 router.put('/tickets/:id', superAdminController.updateTicketStatus);
 router.delete('/tickets/:id', superAdminController.deleteTicket);
 
+// Legal Policy Management (Privacy Policy & Terms for Customer & Partner Apps)
+import { legalPolicyController } from '../controllers/legalPolicy.controller.js';
+router.get('/policies', legalPolicyController.getAllPolicies);
+router.get('/policies/:targetApp/:type', legalPolicyController.getPolicy);
+router.post('/policies/:targetApp/:type', legalPolicyController.savePolicy);
+router.put('/policies/:targetApp/:type', legalPolicyController.savePolicy);
+
 export default router;
