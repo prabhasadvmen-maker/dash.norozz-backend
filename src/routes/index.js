@@ -53,5 +53,7 @@ import publicPolicyRoutes from './publicPolicy.routes.js';
 
 router.use('/public', publicPolicyRoutes);
 router.use('/policies', publicPolicyRoutes);
+router.use('/translation', translationRoutes);
+router.use('/location', locationRoutes);
 
 export default router;

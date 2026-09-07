@@ -18,12 +18,12 @@ export const SUPPORTED_LANGUAGES = {
 export class TranslationService {
   constructor() {
     this.apiUrl = 'https://api.sarvam.ai/translate';
-    // Server-side in-memory translation cache to optimize speed & API calls
+    // Server-side in-memory translation cache to optimize speed & prevent duplicate calls
     this.cache = new Map();
   }
 
   /**
-   * Helper to normalize language code string to valid Sarvam language tag (e.g. 'hi' -> 'hi-IN')
+   * Helper to normalize language code string to valid language tag (e.g. 'hi' -> 'hi-IN')
    */
   normalizeLangCode(langCode, defaultFallback = 'en-IN') {
     if (!langCode) return defaultFallback;
@@ -46,25 +46,44 @@ export class TranslationService {
   }
 
   /**
-   * Translate single text string using Sarvam AI Translation API
+   * Fallback Translation Engine using Google Translate Free Endpoint
+   */
+  async translateWithGoogle({ text, sourceLangCode, targetLangCode }) {
+    try {
+      const srcShort = (sourceLangCode || 'en').split(/[-_]/)[0].toLowerCase();
+      const tgtShort = (targetLangCode || 'hi').split(/[-_]/)[0].toLowerCase();
+
+      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${srcShort}&tl=${tgtShort}&dt=t&q=${encodeURIComponent(text)}`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) return null;
+      const data = await response.json();
+      if (Array.isArray(data) && Array.isArray(data[0])) {
+        const translatedSegments = data[0].map((item) => (item && item[0] ? item[0] : '')).join('');
+        if (translatedSegments && translatedSegments.trim()) {
+          return translatedSegments;
+        }
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * Translate single text string using Sarvam AI with automatic Google Translate fallback
    */
   async translateText({ text, sourceLanguage = 'en-IN', targetLanguage = 'hi-IN' }) {
     if (!text || typeof text !== 'string' || !text.trim()) {
       throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Text parameter is required and cannot be empty.');
     }
 
-    const apiKey = process.env.SARVAM_API_KEY;
-    if (!apiKey) {
-      console.error('❌ SARVAM_API_KEY is not configured in server environment');
-      throw new ApiError(
-        HTTP_STATUS.INTERNAL_SERVER_ERROR,
-        'Translation service configuration missing'
-      );
-    }
-
     const sourceLangCode = this.normalizeLangCode(sourceLanguage, 'en-IN');
     const targetLangCode = this.normalizeLangCode(targetLanguage, 'hi-IN');
-
     const cleanText = text.trim();
 
     // If source and target languages are identical, return text directly
@@ -87,17 +106,14 @@ export class TranslationService {
       };
     }
 
-    // Attempt translation with auto-retry on timeout
-    let attempts = 0;
-    const maxAttempts = 2;
-    let lastError = null;
+    const apiKey = process.env.SARVAM_API_KEY;
 
-    while (attempts < maxAttempts) {
-      attempts++;
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout per item
-
+    // 1. Try Sarvam AI API if API key is present
+    if (apiKey) {
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
+
         const response = await fetch(this.apiUrl, {
           method: 'POST',
           headers: {
@@ -118,70 +134,55 @@ export class TranslationService {
 
         clearTimeout(timeoutId);
 
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          console.error('❌ Sarvam AI Translation API HTTP Error:', response.status, errorData);
-          const errorMsg = errorData.message || errorData.error || `HTTP ${response.status} from Sarvam API`;
-          throw new ApiError(
-            response.status >= 400 && response.status < 500 ? HTTP_STATUS.BAD_REQUEST : HTTP_STATUS.BAD_GATEWAY,
-            `Translation Error: ${errorMsg}`
-          );
-        }
-
-        const data = await response.json();
-        const translatedText = data.translated_text || data.translatedText || cleanText;
-
-        // Store in cache
-        this.cache.set(cacheKey, translatedText);
-
-        return {
-          translatedText,
-          sourceLanguage: data.source_language_code || sourceLangCode,
-          targetLanguage: targetLangCode,
-          requestId: data.request_id || null,
-        };
-      } catch (error) {
-        clearTimeout(timeoutId);
-        lastError = error;
-
-        if (error.name === 'AbortError') {
-          console.warn(`⏳ Sarvam AI Translation timeout on attempt ${attempts} for "${cleanText.slice(0, 20)}..."`);
-          if (attempts < maxAttempts) {
-            await new Promise((resolve) => setTimeout(resolve, 300)); // short pause before retry
-            continue;
+        if (response.ok) {
+          const data = await response.json();
+          const translatedText = data.translated_text || data.translatedText;
+          if (translatedText && translatedText.trim()) {
+            this.cache.set(cacheKey, translatedText);
+            return {
+              translatedText,
+              sourceLanguage: sourceLangCode,
+              targetLanguage: targetLangCode,
+              engine: 'Sarvam AI',
+            };
           }
-          throw new ApiError(
-            HTTP_STATUS.GATEWAY_TIMEOUT,
-            'Translation service request timed out. Please try again.'
-          );
+        } else {
+          const errBody = await response.json().catch(() => ({}));
+          console.warn(`⚠️ Sarvam AI API returned ${response.status}:`, errBody?.error?.message || 'Quota limit reached');
         }
-
-        if (error instanceof ApiError) {
-          throw error;
-        }
-
-        if (attempts < maxAttempts) {
-          await new Promise((resolve) => setTimeout(resolve, 300));
-          continue;
-        }
-
-        console.error('❌ Sarvam AI Translation Network Error:', error.message);
-        throw new ApiError(
-          HTTP_STATUS.SERVICE_UNAVAILABLE,
-          `Translation service network error: ${error.message}`
-        );
+      } catch (err) {
+        console.warn(`⚠️ Sarvam AI API call failed (${err.message}), falling back to Google Translate engine...`);
       }
     }
 
-    throw lastError || new ApiError(HTTP_STATUS.SERVICE_UNAVAILABLE, 'Translation failed after retries');
+    // 2. Fallback Engine: Google Translate API (Zero cost, fast, unlimited fallback)
+    const googleResult = await this.translateWithGoogle({
+      text: cleanText,
+      sourceLangCode,
+      targetLangCode,
+    });
+
+    if (googleResult) {
+      this.cache.set(cacheKey, googleResult);
+      return {
+        translatedText: googleResult,
+        sourceLanguage: sourceLangCode,
+        targetLanguage: targetLangCode,
+        engine: 'Google Translate Fallback',
+      };
+    }
+
+    // 3. Ultimate fallback: return original text
+    return {
+      translatedText: cleanText,
+      sourceLanguage: sourceLangCode,
+      targetLanguage: targetLangCode,
+      engine: 'Original Text Fallback',
+    };
   }
 
   /**
    * Translate array of UI texts in batch
-   * @param {Object} params
-   * @param {string[]} params.texts Array of strings to translate
-   * @param {string} [params.sourceLanguage='en-IN']
-   * @param {string} [params.targetLanguage='hi-IN']
    */
   async translateBatch({ texts = [], sourceLanguage = 'en-IN', targetLanguage = 'hi-IN' }) {
     if (!Array.isArray(texts) || texts.length === 0) {
@@ -191,8 +192,8 @@ export class TranslationService {
     const uniqueTexts = [...new Set(texts.map((t) => String(t || '').trim()).filter((t) => t.length > 0))];
     const resultMap = {};
 
-    // Process in optimal parallel chunks of 5 with 30ms delay to prevent Sarvam API rate spikes
-    const batchSize = 5;
+    // Process in optimal parallel chunks of 10 for high speed performance
+    const batchSize = 10;
     for (let i = 0; i < uniqueTexts.length; i += batchSize) {
       const chunk = uniqueTexts.slice(i, i + batchSize);
       await Promise.all(
@@ -207,7 +208,7 @@ export class TranslationService {
         })
       );
       if (i + batchSize < uniqueTexts.length) {
-        await new Promise((resolve) => setTimeout(resolve, 30));
+        await new Promise((resolve) => setTimeout(resolve, 20));
       }
     }
 
