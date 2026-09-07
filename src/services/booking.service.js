@@ -643,6 +643,7 @@ export class BookingService {
     if (isPaid) booking.paymentStatus = 'refunded';
     booking.financialStatus = 'REFUNDED';
     booking.cancellationReason = reason || 'Customer Cancellation';
+    booking.cancelledBy = 'customer';
     booking.refundAmount = packageRefundAmount;
     await booking.save();
 

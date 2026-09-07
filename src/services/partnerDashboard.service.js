@@ -222,8 +222,11 @@ export class PartnerDashboardService {
     this.checkKycApproved(partner);
     return await bookingRepository.model
       .find({
-        $or: [{ partner: partner._id }, { partner: String(partner._id) }],
-        status: { $in: ['Cancelled', 'Refunded', 'cancelled'] },
+        $or: [
+          { partner: partner._id },
+          { partner: String(partner._id) },
+          { cancelledByPartners: partner._id }
+        ],
       })
       .populate('category', 'name slug image')
       .populate('service', 'name slug price finalPrice duration')
@@ -234,10 +237,14 @@ export class PartnerDashboardService {
   async getAllBookings(partner) {
     this.checkKycApproved(partner);
 
-    // Return ONLY this partner's own claimed / assigned bookings
+    // Return this partner's own claimed / assigned bookings AND bookings cancelled by this partner
     return await bookingRepository.model
       .find({
-        $or: [{ partner: partner._id }, { partner: String(partner._id) }],
+        $or: [
+          { partner: partner._id },
+          { partner: String(partner._id) },
+          { cancelledByPartners: partner._id }
+        ],
       })
       .populate('category', 'name slug image')
       .populate('service', 'name slug price finalPrice duration')
@@ -922,6 +929,7 @@ export class PartnerDashboardService {
     booking.otpVerified = false;
     booking.startedAt = null;
     booking.cancellationReason = cancelReasonStr;
+    booking.cancelledBy = 'partner';
     await booking.save();
 
     // Check Daily Cancellation Limit & Apply Penalty / Suspension

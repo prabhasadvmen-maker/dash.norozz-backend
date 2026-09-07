@@ -175,6 +175,11 @@ const bookingSchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
+    cancelledBy: {
+      type: String,
+      enum: ['customer', 'partner', 'admin', 'system', ''],
+      default: '',
+    },
     completionOtp: {
       type: String,
       default: () => Math.floor(1000 + Math.random() * 9000).toString(),

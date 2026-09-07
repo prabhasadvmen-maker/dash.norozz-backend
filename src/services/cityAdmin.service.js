@@ -317,6 +317,8 @@ export class CityAdminService {
     }
 
     booking.status = 'cancelled';
+    booking.cancellationReason = reason || 'Admin Cancellation';
+    booking.cancelledBy = 'admin';
     await booking.save();
 
     return { message: `Booking '${booking.bookingId}' cancelled. Reason: ${reason || 'Admin Cancellation'}`, booking };
