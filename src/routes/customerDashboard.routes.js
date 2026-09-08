@@ -13,6 +13,11 @@ const router = Router();
 router.use(verifyJWT);
 router.use(authorizeRoles(ROLES.CUSTOMER));
 
+import { starterPackController } from '../controllers/starterPack.controller.js';
+
+router.get('/starter-pack', starterPackController.getStarterPackPublic);
+router.post('/starter-pack/claim', starterPackController.claimStarterPack);
+
 // Combined Home Feed & Catalogs
 router.get('/dashboard', customerDashboardController.getDashboard);
 router.get('/faqs', customerDashboardController.getFaqs);

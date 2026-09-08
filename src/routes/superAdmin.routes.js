@@ -68,9 +68,16 @@ router.delete('/tickets/:id', superAdminController.deleteTicket);
 
 // Legal Policy Management (Privacy Policy & Terms for Customer & Partner Apps)
 import { legalPolicyController } from '../controllers/legalPolicy.controller.js';
+import { starterPackController } from '../controllers/starterPack.controller.js';
+
 router.get('/policies', legalPolicyController.getAllPolicies);
 router.get('/policies/:targetApp/:type', legalPolicyController.getPolicy);
 router.post('/policies/:targetApp/:type', legalPolicyController.savePolicy);
 router.put('/policies/:targetApp/:type', legalPolicyController.savePolicy);
+
+// Starter Pack Management (New User Offers)
+router.get('/starter-pack', starterPackController.getStarterPackAdmin);
+router.put('/starter-pack', starterPackController.updateStarterPackAdmin);
+router.post('/starter-pack', starterPackController.updateStarterPackAdmin);
 
 export default router;
