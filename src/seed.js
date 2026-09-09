@@ -21,7 +21,7 @@ async function seed() {
     const superAdminEmail = 'superadmin@norozz.com';
     let superAdmin = await User.findOne({ email: superAdminEmail });
     if (!superAdmin) {
-      superAdmin = await User.create({
+      superAdmin = await User.create({ assignedCity: null,
         name: 'Super Admin',
         email: superAdminEmail,
         password: 'SuperAdminPass123!',
@@ -33,7 +33,8 @@ async function seed() {
       console.log('✅ Super Admin created: superadmin@norozz.com / SuperAdminPass123!');
     } else {
       superAdmin.password = 'SuperAdminPass123!';
-      await superAdmin.save();
+      superAdmin.assignedCity = null;
+      await superAdmin.save({ validateBeforeSave: false });
       console.log('✅ Super Admin password updated to: SuperAdminPass123!');
     }
 
@@ -57,7 +58,7 @@ async function seed() {
           password: 'CityAdminPass123!',
           role: ROLES.CITY_ADMIN,
           city: adminData.city,
-          assignedCity: adminData.assignedCity,
+          assignedCity: null,
           status: 'active',
           isEmailVerified: true,
           isPhoneVerified: true,
@@ -66,10 +67,10 @@ async function seed() {
       } else {
         cityAdminUser.password = 'CityAdminPass123!';
         cityAdminUser.role = ROLES.CITY_ADMIN;
-        cityAdminUser.assignedCity = adminData.assignedCity;
+        cityAdminUser.assignedCity = null;
         cityAdminUser.city = adminData.city;
         cityAdminUser.status = 'active';
-        await cityAdminUser.save();
+        await cityAdminUser.save({ validateBeforeSave: false });
         console.log(`✅ City Admin updated: ${adminData.email} / CityAdminPass123! (${adminData.assignedCity})`);
       }
     }

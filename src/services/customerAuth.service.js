@@ -166,15 +166,28 @@ export class CustomerAuthService {
     const cleanId = emailOrPhone.trim();
     const isEmail = cleanId.includes('@');
 
+    const currentUser = await userRepository.findById(customerId);
+    if (!currentUser) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Customer account not found');
+    }
+
     if (isEmail) {
-      const existing = await userRepository.findByEmail(cleanId.toLowerCase());
-      if (existing && existing._id.toString() !== customerId.toString()) {
-        throw new ApiError(HTTP_STATUS.CONFLICT, 'This email address is already registered to another account.');
+      const cleanEmail = cleanId.toLowerCase();
+      const userEmail = currentUser.email ? currentUser.email.toLowerCase() : '';
+      if (userEmail !== cleanEmail) {
+        const existing = await userRepository.findByEmail(cleanEmail);
+        if (existing && existing._id.toString() !== customerId.toString()) {
+          throw new ApiError(HTTP_STATUS.CONFLICT, 'This email address is already registered to another account.');
+        }
       }
     } else {
-      const existing = await userRepository.findByPhone(cleanId);
-      if (existing && existing._id.toString() !== customerId.toString()) {
-        throw new ApiError(HTTP_STATUS.CONFLICT, 'This mobile phone number is already registered to another account.');
+      const cleanPhoneNorm = normalizePhoneNumber(cleanId);
+      const userPhoneNorm = currentUser.phone ? normalizePhoneNumber(currentUser.phone) : '';
+      if (!userPhoneNorm || userPhoneNorm !== cleanPhoneNorm) {
+        const existing = await userRepository.findByPhone(cleanId);
+        if (existing && existing._id.toString() !== customerId.toString()) {
+          throw new ApiError(HTTP_STATUS.CONFLICT, 'This mobile phone number is already registered to another account.');
+        }
       }
     }
 

@@ -38,11 +38,15 @@ export const starterPackController = {
 
   // Super Admin: Update Starter Pack Configuration
   updateStarterPackAdmin: asyncHandler(async (req, res) => {
+    const updateData = { ...req.body };
+    if (!updateData.applicableCategory) updateData.applicableCategory = null;
+    if (!updateData.applicableService) updateData.applicableService = null;
+
     let pack = await StarterPack.findOne();
     if (!pack) {
-      pack = new StarterPack(req.body);
+      pack = new StarterPack(updateData);
     } else {
-      Object.assign(pack, req.body);
+      Object.assign(pack, updateData);
     }
 
     await pack.save();

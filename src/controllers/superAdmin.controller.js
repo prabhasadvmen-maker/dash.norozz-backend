@@ -1,6 +1,7 @@
 import { BaseController } from './base.controller.js';
 import { superAdminService } from '../services/superAdmin.service.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { HTTP_STATUS } from '../constants/httpStatus.js';
 
 export class SuperAdminController extends BaseController {
 

@@ -108,50 +108,60 @@ export class TranslationService {
 
     const apiKey = process.env.SARVAM_API_KEY;
 
-    // 1. Try Sarvam AI API if API key is present
+    // 1. Try Sarvam AI API if API key is present (with retry on 429)
     if (apiKey) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
+      let retryDelay = 2000;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-        const response = await fetch(this.apiUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'api-subscription-key': apiKey,
-          },
-          body: JSON.stringify({
-            input: cleanText,
-            source_language_code: sourceLangCode,
-            target_language_code: targetLangCode,
-            speaker_gender: 'Female',
-            mode: 'formal',
-            model: 'mayura:v1',
-            enable_preprocessing: true,
-          }),
-          signal: controller.signal,
-        });
+          const response = await fetch(this.apiUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'api-subscription-key': apiKey,
+            },
+            body: JSON.stringify({
+              input: cleanText,
+              source_language_code: sourceLangCode,
+              target_language_code: targetLangCode,
+              speaker_gender: 'Female',
+              mode: 'formal',
+              model: 'mayura:v1',
+              enable_preprocessing: true,
+            }),
+            signal: controller.signal,
+          });
 
-        clearTimeout(timeoutId);
+          clearTimeout(timeoutId);
 
-        if (response.ok) {
-          const data = await response.json();
-          const translatedText = data.translated_text || data.translatedText;
-          if (translatedText && translatedText.trim()) {
-            this.cache.set(cacheKey, translatedText);
-            return {
-              translatedText,
-              sourceLanguage: sourceLangCode,
-              targetLanguage: targetLangCode,
-              engine: 'Sarvam AI',
-            };
+          if (response.ok) {
+            const data = await response.json();
+            const translatedText = data.translated_text || data.translatedText;
+            if (translatedText && translatedText.trim()) {
+              this.cache.set(cacheKey, translatedText);
+              return {
+                translatedText,
+                sourceLanguage: sourceLangCode,
+                targetLanguage: targetLangCode,
+                engine: 'Sarvam AI',
+              };
+            }
+            break;
+          } else if (response.status === 429) {
+            console.warn(`⚠️ Sarvam AI rate limit hit, waiting ${retryDelay}ms before retry...`);
+            await new Promise((r) => setTimeout(r, retryDelay));
+            retryDelay *= 2;
+          } else {
+            const errBody = await response.json().catch(() => ({}));
+            console.warn(`⚠️ Sarvam AI API returned ${response.status}:`, errBody?.error?.message || 'Unknown error');
+            break;
           }
-        } else {
-          const errBody = await response.json().catch(() => ({}));
-          console.warn(`⚠️ Sarvam AI API returned ${response.status}:`, errBody?.error?.message || 'Quota limit reached');
+        } catch (err) {
+          console.warn(`⚠️ Sarvam AI API call failed (${err.message}), falling back to Google Translate engine...`);
+          break;
         }
-      } catch (err) {
-        console.warn(`⚠️ Sarvam AI API call failed (${err.message}), falling back to Google Translate engine...`);
       }
     }
 
@@ -192,8 +202,8 @@ export class TranslationService {
     const uniqueTexts = [...new Set(texts.map((t) => String(t || '').trim()).filter((t) => t.length > 0))];
     const resultMap = {};
 
-    // Process in optimal parallel chunks of 10 for high speed performance
-    const batchSize = 10;
+    // Process sequentially with delay to avoid Sarvam AI rate limits (429)
+    const batchSize = 3;
     for (let i = 0; i < uniqueTexts.length; i += batchSize) {
       const chunk = uniqueTexts.slice(i, i + batchSize);
       await Promise.all(
@@ -203,12 +213,12 @@ export class TranslationService {
             resultMap[str] = res.translatedText;
           } catch (e) {
             console.warn(`⚠️ Batch item translation fallback for "${str}":`, e.message);
-            resultMap[str] = str; // Fallback to original
+            resultMap[str] = str;
           }
         })
       );
       if (i + batchSize < uniqueTexts.length) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await new Promise((resolve) => setTimeout(resolve, 1200));
       }
     }
 

@@ -22,6 +22,7 @@ import servicePackageRoutes from './servicePackage.routes.js';
 import translationRoutes from './translation.routes.js';
 import locationRoutes from './location.routes.js';
 import kycRoutes from './kyc.routes.js';
+import pushNotificationRoutes from './pushNotification.routes.js';
 
 const router = Router();
 
@@ -55,5 +56,6 @@ router.use('/public', publicPolicyRoutes);
 router.use('/policies', publicPolicyRoutes);
 router.use('/translation', translationRoutes);
 router.use('/location', locationRoutes);
+router.use('/notifications', pushNotificationRoutes);
 
 export default router;
