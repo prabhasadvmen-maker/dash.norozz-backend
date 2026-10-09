@@ -8,9 +8,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
  * Verify JWT Access Token in Authorization header or Cookies
  */
 export const verifyJWT = asyncHandler(async (req, res, next) => {
-  const token =
-    req.cookies?.accessToken ||
-    req.header('Authorization')?.replace('Bearer ', '');
+  const token = req.cookies?.accessToken;
 
   if (!token) {
     throw new ApiError(HTTP_STATUS.UNAUTHORIZED, 'Unauthorized request: Token missing');

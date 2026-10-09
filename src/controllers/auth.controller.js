@@ -4,31 +4,43 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 
 export class AuthController extends BaseController {
 
-  // Cookie Helper
-  setCookie(res, refreshToken) {
+  // Cookie Helpers
+  setAccessTokenCookie(res, accessToken) {
+    res.cookie('accessToken', accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 24 * 60 * 60 * 1000, // 1 day
+    });
+  }
+
+  setRefreshTokenCookie(res, refreshToken) {
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
   }
 
   // 1. CUSTOMER HANDLERS
   customerSignup = asyncHandler(async (req, res) => {
     const result = await authService.customerSignup(req.body);
-    this.setCookie(res, result.refreshToken);
-    return this.sendCreated(res, result, 'Customer account created successfully');
+    this.setAccessTokenCookie(res, result.accessToken);
+    this.setRefreshTokenCookie(res, result.refreshToken);
+    return this.sendCreated(res, { user: result.user }, 'Customer account created successfully');
   });
 
   customerLogin = asyncHandler(async (req, res) => {
     const { email, password } = req.body;
     const result = await authService.customerLogin(email, password);
-    this.setCookie(res, result.refreshToken);
-    return this.sendSuccess(res, result, 'Customer login successful');
+    this.setAccessTokenCookie(res, result.accessToken);
+    this.setRefreshTokenCookie(res, result.refreshToken);
+    return this.sendSuccess(res, { user: result.user }, 'Customer login successful');
   });
 
   customerLogout = asyncHandler(async (req, res) => {
+    res.clearCookie('accessToken');
     res.clearCookie('refreshToken');
     return this.sendSuccess(res, null, 'Customer logged out successfully');
   });
@@ -36,7 +48,8 @@ export class AuthController extends BaseController {
   customerRefreshToken = asyncHandler(async (req, res) => {
     const refreshToken = req.cookies?.refreshToken || req.body.refreshToken;
     const result = await authService.customerRefreshToken(refreshToken);
-    return this.sendSuccess(res, result, 'Access Token refreshed successfully');
+    this.setAccessTokenCookie(res, result.accessToken);
+    return this.sendSuccess(res, null, 'Access Token refreshed successfully');
   });
 
   customerForgotPassword = asyncHandler(async (req, res) => {
@@ -54,18 +67,21 @@ export class AuthController extends BaseController {
   // 2. PARTNER HANDLERS
   partnerSignup = asyncHandler(async (req, res) => {
     const result = await authService.partnerSignup(req.body);
-    this.setCookie(res, result.refreshToken);
-    return this.sendCreated(res, result, 'Partner onboarding application submitted successfully');
+    this.setAccessTokenCookie(res, result.accessToken);
+    this.setRefreshTokenCookie(res, result.refreshToken);
+    return this.sendCreated(res, { user: result.user }, 'Partner onboarding application submitted successfully');
   });
 
   partnerLogin = asyncHandler(async (req, res) => {
     const { email, password } = req.body;
     const result = await authService.partnerLogin(email, password);
-    this.setCookie(res, result.refreshToken);
-    return this.sendSuccess(res, result, 'Partner login successful');
+    this.setAccessTokenCookie(res, result.accessToken);
+    this.setRefreshTokenCookie(res, result.refreshToken);
+    return this.sendSuccess(res, { user: result.user }, 'Partner login successful');
   });
 
   partnerLogout = asyncHandler(async (req, res) => {
+    res.clearCookie('accessToken');
     res.clearCookie('refreshToken');
     return this.sendSuccess(res, null, 'Partner logged out successfully');
   });
@@ -74,16 +90,18 @@ export class AuthController extends BaseController {
   cityAdminLogin = asyncHandler(async (req, res) => {
     const { email, password } = req.body;
     const result = await authService.cityAdminLogin(email, password);
-    this.setCookie(res, result.refreshToken);
-    return this.sendSuccess(res, result, 'City Admin login successful');
+    this.setAccessTokenCookie(res, result.accessToken);
+    this.setRefreshTokenCookie(res, result.refreshToken);
+    return this.sendSuccess(res, { user: result.user }, 'City Admin login successful');
   });
 
   // 4. SUPER ADMIN HANDLER
   superAdminLogin = asyncHandler(async (req, res) => {
     const { email, password } = req.body;
     const result = await authService.superAdminLogin(email, password);
-    this.setCookie(res, result.refreshToken);
-    return this.sendSuccess(res, result, 'Super Admin login successful');
+    this.setAccessTokenCookie(res, result.accessToken);
+    this.setRefreshTokenCookie(res, result.refreshToken);
+    return this.sendSuccess(res, { user: result.user, accessToken: result.accessToken }, 'Super Admin login successful');
   });
 }
 

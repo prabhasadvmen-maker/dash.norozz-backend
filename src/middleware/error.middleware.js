@@ -17,8 +17,7 @@ export const errorHandler = (err, req, res, next) => {
     statusCode: error.statusCode,
     success: false,
     message: error.message,
-    errors: error.errors,
-    ...(process.env.NODE_ENV === 'development' ? { stack: error.stack } : {}),
+    errors: error.errors?.length ? error.errors : undefined,
   };
 
   // Ensure CORS header is attached even on unhandled error responses

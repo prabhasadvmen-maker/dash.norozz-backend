@@ -4,6 +4,24 @@ import { r2StorageService } from '../services/r2Storage.service.js';
 const router = Router();
 
 /**
+ * Generate Presigned URL for Upload
+ * POST /api/media/presigned-url
+ */
+router.post('/presigned-url', async (req, res) => {
+  try {
+    const { fileName, mimeType, folder } = req.body;
+    if (!fileName || !mimeType) {
+      return res.status(400).json({ success: false, message: 'fileName and mimeType are required' });
+    }
+    const result = await r2StorageService.getPresignedUrl(fileName, mimeType, folder || 'banners');
+    res.json({ success: true, data: result });
+  } catch (error) {
+    console.error('Presigned URL Error:', error);
+    res.status(500).json({ success: false, message: 'Failed to generate presigned URL' });
+  }
+});
+
+/**
  * Public Media Proxy Endpoint for Cloudflare R2 files
  * GET /api/media/*
  */

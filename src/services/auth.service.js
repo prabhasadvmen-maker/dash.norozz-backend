@@ -15,9 +15,13 @@ export class AuthService {
     user.lastLogin = new Date();
     await user.save({ validateBeforeSave: false });
 
-    const userObject = user.toObject ? user.toObject() : { ...user };
-    delete userObject.password;
-    delete userObject.refreshToken;
+    const userObject = {
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      status: user.status,
+    };
 
     return { user: userObject, accessToken, refreshToken };
   }
@@ -70,8 +74,7 @@ export class AuthService {
         throw new ApiError(HTTP_STATUS.UNAUTHORIZED, 'Invalid or expired refresh token');
       }
 
-      const newAccessToken = user.generateAccessToken();
-      return { accessToken: newAccessToken };
+      return { accessToken: user.generateAccessToken() };
     } catch (error) {
       throw new ApiError(HTTP_STATUS.UNAUTHORIZED, 'Expired or invalid refresh token');
     }
