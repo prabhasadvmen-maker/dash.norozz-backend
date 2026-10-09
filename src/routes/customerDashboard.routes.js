@@ -59,5 +59,7 @@ router.post('/ai-chat', customerDashboardController.chatWithAi);
 // Support Ticket Endpoints
 router.get('/tickets', customerDashboardController.getUserTickets);
 router.post('/tickets', customerDashboardController.createTicket);
+router.get('/tickets/:id', customerDashboardController.getTicketById);
+router.post('/tickets/:id/reply', customerDashboardController.replyToTicket);
 
 export default router;

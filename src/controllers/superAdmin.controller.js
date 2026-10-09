@@ -165,6 +165,11 @@ export class SuperAdminController extends BaseController {
     const result = await superAdminService.deleteTicket(req.params.id);
     return this.sendSuccess(res, result, result.message);
   });
+
+  replyToTicket = asyncHandler(async (req, res) => {
+    const ticket = await superAdminService.replyToTicket(req.params.id, req.body.message, req.user.name || 'Super Admin');
+    return this.sendSuccess(res, ticket, 'Reply sent successfully');
+  });
 }
 
 export const superAdminController = new SuperAdminController();

@@ -775,6 +775,21 @@ export class SuperAdminService {
     }
     return { message: 'Support ticket deleted successfully' };
   }
+
+  async replyToTicket(id, message, senderName) {
+    const { Ticket } = await import('../models/ticket.model.js');
+    if (!message?.trim()) {
+      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Reply message is required');
+    }
+    const ticket = await Ticket.findById(id);
+    if (!ticket) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Support ticket not found');
+    }
+    ticket.replies.push({ message: message.trim(), senderType: 'admin', senderName });
+    if (ticket.status === 'Open') ticket.status = 'In Progress';
+    await ticket.save();
+    return ticket;
+  }
 }
 
 export const superAdminService = new SuperAdminService();

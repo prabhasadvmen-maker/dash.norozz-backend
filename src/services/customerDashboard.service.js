@@ -593,6 +593,24 @@ export class CustomerDashboardService {
     if (!userId) return [];
     return await Ticket.find({ user: userId }).sort({ createdAt: -1 });
   }
+
+  async getTicketById(ticketId, userId) {
+    const { Ticket } = await import('../models/ticket.model.js');
+    const ticket = await Ticket.findOne({ _id: ticketId, user: userId });
+    if (!ticket) throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Ticket not found');
+    return ticket;
+  }
+
+  async replyToTicket(ticketId, user, message) {
+    const { Ticket } = await import('../models/ticket.model.js');
+    if (!message?.trim()) throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Reply message is required');
+    const ticket = await Ticket.findOne({ _id: ticketId, user: user._id });
+    if (!ticket) throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Ticket not found');
+    if (ticket.status === 'Closed') throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Cannot reply to a closed ticket');
+    ticket.replies.push({ message: message.trim(), senderType: 'customer', senderName: user.name || 'Customer' });
+    await ticket.save();
+    return ticket;
+  }
 }
 
 export const customerDashboardService = new CustomerDashboardService();

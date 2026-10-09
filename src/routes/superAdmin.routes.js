@@ -64,6 +64,7 @@ router.patch('/faqs/:id/status', superAdminController.toggleFaqStatus);
 // Support Ticket Management CRUD
 router.get('/tickets', superAdminController.getAllTickets);
 router.put('/tickets/:id', superAdminController.updateTicketStatus);
+router.post('/tickets/:id/reply', superAdminController.replyToTicket);
 router.delete('/tickets/:id', superAdminController.deleteTicket);
 
 // Legal Policy Management (Privacy Policy & Terms for Customer & Partner Apps)

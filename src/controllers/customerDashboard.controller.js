@@ -138,6 +138,16 @@ export class CustomerDashboardController extends BaseController {
     const tickets = await customerDashboardService.getUserTickets(req.user?._id);
     return this.sendSuccess(res, tickets, 'Customer tickets retrieved successfully');
   });
+
+  getTicketById = asyncHandler(async (req, res) => {
+    const ticket = await customerDashboardService.getTicketById(req.params.id, req.user?._id);
+    return this.sendSuccess(res, ticket, 'Ticket details retrieved successfully');
+  });
+
+  replyToTicket = asyncHandler(async (req, res) => {
+    const ticket = await customerDashboardService.replyToTicket(req.params.id, req.user, req.body.message);
+    return this.sendSuccess(res, ticket, 'Reply sent successfully');
+  });
 }
 
 export const customerDashboardController = new CustomerDashboardController();
