@@ -36,7 +36,7 @@ export class AuthController extends BaseController {
     const result = await authService.customerLogin(email, password);
     this.setAccessTokenCookie(res, result.accessToken);
     this.setRefreshTokenCookie(res, result.refreshToken);
-    return this.sendSuccess(res, { user: result.user }, 'Customer login successful');
+    return this.sendSuccess(res, { user: result.user, accessToken: result.accessToken }, 'Customer login successful');
   });
 
   customerLogout = asyncHandler(async (req, res) => {
@@ -49,7 +49,7 @@ export class AuthController extends BaseController {
     const refreshToken = req.cookies?.refreshToken || req.body.refreshToken;
     const result = await authService.customerRefreshToken(refreshToken);
     this.setAccessTokenCookie(res, result.accessToken);
-    return this.sendSuccess(res, null, 'Access Token refreshed successfully');
+    return this.sendSuccess(res, { accessToken: result.accessToken }, 'Access Token refreshed successfully');
   });
 
   customerForgotPassword = asyncHandler(async (req, res) => {
@@ -69,7 +69,7 @@ export class AuthController extends BaseController {
     const result = await authService.partnerSignup(req.body);
     this.setAccessTokenCookie(res, result.accessToken);
     this.setRefreshTokenCookie(res, result.refreshToken);
-    return this.sendCreated(res, { user: result.user }, 'Partner onboarding application submitted successfully');
+    return this.sendCreated(res, { user: result.user, accessToken: result.accessToken }, 'Partner onboarding application submitted successfully');
   });
 
   partnerLogin = asyncHandler(async (req, res) => {
@@ -77,7 +77,7 @@ export class AuthController extends BaseController {
     const result = await authService.partnerLogin(email, password);
     this.setAccessTokenCookie(res, result.accessToken);
     this.setRefreshTokenCookie(res, result.refreshToken);
-    return this.sendSuccess(res, { user: result.user }, 'Partner login successful');
+    return this.sendSuccess(res, { user: result.user, accessToken: result.accessToken }, 'Partner login successful');
   });
 
   partnerLogout = asyncHandler(async (req, res) => {
@@ -92,7 +92,7 @@ export class AuthController extends BaseController {
     const result = await authService.cityAdminLogin(email, password);
     this.setAccessTokenCookie(res, result.accessToken);
     this.setRefreshTokenCookie(res, result.refreshToken);
-    return this.sendSuccess(res, { user: result.user }, 'City Admin login successful');
+    return this.sendSuccess(res, { user: result.user, accessToken: result.accessToken }, 'City Admin login successful');
   });
 
   // 4. SUPER ADMIN HANDLER
