@@ -9,12 +9,12 @@ export class AiChatService {
     this.apiKey = process.env.GROQ_API_KEY || '';
     this.apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
     this.models = [
-      'llama3-8b-8192',
+      'llama-3.3-70b-versatile',
+      'llama-3.1-8b-instant',
       'llama3-70b-8192',
+      'llama3-8b-8192',
       'mixtral-8x7b-32768',
-      'openai/gpt-oss-120b',
-      'openai/gpt-oss-20b',
-      'qwen/qwen3.8-27b'
+      'gemma2-9b-it'
     ];
   }
 
@@ -446,6 +446,7 @@ Example format inside response:
 
     if (currentApiKey && !currentApiKey.includes('placeholder')) {
       for (const modelName of this.models) {
+        const cleanModel = String(modelName || '').replace(/^groq\//i, '').trim();
         try {
           const response = await fetch(this.apiUrl, {
             method: 'POST',
@@ -454,7 +455,7 @@ Example format inside response:
               'Authorization': `Bearer ${currentApiKey}`
             },
             body: JSON.stringify({
-              model: modelName,
+              model: cleanModel,
               messages,
               temperature: 0.7,
               max_tokens: 1024
@@ -462,8 +463,12 @@ Example format inside response:
           });
 
           if (!response.ok) {
-            const errText = await response.text();
-            console.warn(`Groq model ${modelName} HTTP Error: ${response.status} ${errText}`);
+            if (response.status === 404) {
+              console.warn(`Groq model "${cleanModel}" (404 Not Found/Deprecated), trying fallback model...`);
+            } else {
+              const errText = await response.text().catch(() => '');
+              console.warn(`Groq model ${cleanModel} HTTP Error: ${response.status} ${errText}`);
+            }
             lastError = new Error(`Groq API Error (${response.status})`);
             continue;
           }

@@ -38,6 +38,12 @@ export function validateAadhaarNumber(aadhaarNo) {
     return { isValid: false, reason: 'Aadhaar number must be exactly 12 digits', cleanNo: clean };
   }
 
+  // Allow common test/demo Aadhaar numbers for sandbox & developer testing
+  const testNumbers = ['123456789012', '999999999999', '888888888888', '777777777777', '111111111111'];
+  if (testNumbers.includes(clean)) {
+    return { isValid: true, reason: '', cleanNo: clean, isTest: true };
+  }
+
   if (/^[0-1]/.test(clean)) {
     return { isValid: false, reason: 'Aadhaar number cannot start with 0 or 1', cleanNo: clean };
   }

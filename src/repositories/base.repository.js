@@ -1,3 +1,5 @@
+import mongoose from 'mongoose';
+
 /**
  * Generic Base Repository Class implementing Mongoose Repository Pattern
  */
@@ -11,6 +13,7 @@ export class BaseRepository {
   }
 
   async findById(id, select = '') {
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) return null;
     return await this.model.findById(id).select(select);
   }
 
@@ -23,10 +26,12 @@ export class BaseRepository {
   }
 
   async updateById(id, updateData, options = { new: true, runValidators: true }) {
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) return null;
     return await this.model.findByIdAndUpdate(id, updateData, options);
   }
 
   async deleteById(id) {
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) return null;
     return await this.model.findByIdAndDelete(id);
   }
 

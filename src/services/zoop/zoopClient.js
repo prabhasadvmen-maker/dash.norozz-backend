@@ -38,11 +38,15 @@ export class ZoopClient {
 
       const resData = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(resData?.response_message || resData?.message || `ZOOP HTTP Error ${response.status}`);
+        const errorMsg = resData?.response_message || resData?.message || `ZOOP HTTP Error ${response.status}`;
+        console.warn(`[ZOOP Client Notice] ${endpoint}: ${errorMsg}`);
+        throw new Error(errorMsg);
       }
       return resData;
     } catch (error) {
-      console.error(`[ZOOP Client Error] ${endpoint}:`, error.message);
+      if (!error.message.startsWith('ZOOP Client Notice')) {
+        console.warn(`[ZOOP Client Notice] ${endpoint}:`, error.message);
+      }
       throw error;
     }
   }

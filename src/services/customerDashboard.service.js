@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { userRepository } from '../repositories/user.repository.js';
 import { bookingRepository } from '../repositories/booking.repository.js';
 import { categoryRepository } from '../repositories/category.repository.js';
@@ -595,6 +596,9 @@ export class CustomerDashboardService {
   }
 
   async getTicketById(ticketId, userId) {
+    if (!ticketId || !mongoose.Types.ObjectId.isValid(ticketId)) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Ticket not found');
+    }
     const { Ticket } = await import('../models/ticket.model.js');
     const ticket = await Ticket.findOne({ _id: ticketId, user: userId });
     if (!ticket) throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Ticket not found');
@@ -602,6 +606,9 @@ export class CustomerDashboardService {
   }
 
   async replyToTicket(ticketId, user, message) {
+    if (!ticketId || !mongoose.Types.ObjectId.isValid(ticketId)) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Ticket not found');
+    }
     const { Ticket } = await import('../models/ticket.model.js');
     if (!message?.trim()) throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Reply message is required');
     const ticket = await Ticket.findOne({ _id: ticketId, user: user._id });

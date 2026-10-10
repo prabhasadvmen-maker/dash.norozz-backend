@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { userRepository } from '../repositories/user.repository.js';
 import { bookingRepository } from '../repositories/booking.repository.js';
 import { Complaint } from '../models/complaint.model.js';
@@ -266,6 +267,9 @@ export class PartnerDashboardService {
 
   async getBookingDetails(partner, bookingId) {
     this.checkKycApproved(partner);
+    if (!bookingId || !mongoose.Types.ObjectId.isValid(bookingId)) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Booking not found');
+    }
     const booking = await bookingRepository.model
       .findOne({
         _id: bookingId,
