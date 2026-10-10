@@ -9,8 +9,9 @@ export class AiChatService {
     this.apiKey = process.env.GROQ_API_KEY || '';
     this.apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
     this.models = [
-      'groq/compound',
-      'groq/compound-mini',
+      'llama3-8b-8192',
+      'llama3-70b-8192',
+      'mixtral-8x7b-32768',
       'openai/gpt-oss-120b',
       'openai/gpt-oss-20b',
       'qwen/qwen3.8-27b'
