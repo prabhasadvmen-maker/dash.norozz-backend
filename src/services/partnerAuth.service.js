@@ -288,9 +288,12 @@ export class PartnerAuthService {
 
   // 1c. UPDATE PARTNER PROFILE (After OTP verify or profile edit)
   async updateProfile(partnerId, updateData, file = null) {
-    const partner = await userRepository.findById(partnerId);
-    if (!partner || partner.role !== ROLES.PARTNER) {
+    let partner = await userRepository.findById(partnerId);
+    if (!partner) {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner account not found');
+    }
+    if (partner.role !== ROLES.PARTNER) {
+      throw new ApiError(HTTP_STATUS.FORBIDDEN, 'This account is not a partner account');
     }
 
     const allowedFields = [
