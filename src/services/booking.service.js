@@ -8,6 +8,7 @@ import { ApiError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { ROLES } from '../constants/roles.constant.js';
 import { dispatchNewJobOffer } from '../sockets/index.js';
+import { autoAssignmentService } from './autoAssignment.service.js';
 
 import { financialCalculatorService } from './financialCalculator.service.js';
 import { financialEngineService } from './financialEngine.service.js';
@@ -178,6 +179,19 @@ export class BookingService {
       dispatchNewJobOffer(populatedBooking).catch((err) => {
         console.error('Socket dispatch error:', err);
       });
+
+      // BUG 5 FIX: Auto-assignment fallback — if no partner claims within 60 seconds, auto-assign
+      setTimeout(async () => {
+        try {
+          const freshBooking = await bookingRepository.findById(newBooking._id);
+          if (freshBooking && freshBooking.status === 'Pending') {
+            console.log(`⏰ No partner claimed booking [${newBooking.bookingId || newBooking._id}] in 60s — triggering auto-assignment fallback.`);
+            await autoAssignmentService.autoAssignPartner(newBooking._id);
+          }
+        } catch (e) {
+          console.warn('Auto-assignment fallback error:', e.message);
+        }
+      }, 60000);
 
       return populatedBooking;
     } catch (error) {

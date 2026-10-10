@@ -173,7 +173,7 @@ export class PartnerAuthService {
 
     return {
       phone: cleanPhone,
-      otp: generatedOtp,
+      // BUG 1 FIX: OTP removed from response — never expose OTP over network
       nextStep: 'VERIFY_OTP',
       onboardingStatus: statusInfo.onboardingStatus,
       message: 'OTP sent successfully to mobile number',
@@ -209,7 +209,8 @@ export class PartnerAuthService {
         name: '',
         agencyName: '',
         phone: cleanPhone,
-        password: 'AutoOtpPartnerPass123!',
+        // BUG 2 FIX: Replace hardcoded password with a cryptographically random password
+        password: (await import('crypto')).randomBytes(16).toString('hex'),
         role: ROLES.PARTNER,
         city: '',
         assignedCity: null,
@@ -487,7 +488,7 @@ export class PartnerAuthService {
       expiresAt,
     });
 
-    return { email, otp: generatedOtp, message: 'Password reset OTP sent to registered email' };
+    return { email, message: 'Password reset OTP sent to registered email' };
   }
 
   // 4. RESET PASSWORD

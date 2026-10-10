@@ -121,6 +121,16 @@ export class PartnerDashboardService {
       ? partner.lifetimeEarnings
       : realNetEarnings;
 
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const todayEarnings = completedBookingsList
+      .filter(b => new Date(b.createdAt) >= startOfToday)
+      .reduce((sum, b) => {
+        const snapshot = b.financialSnapshot || {};
+        return sum + (snapshot.partnerNetEarning ?? (b.amount ? (b.amount - Math.round(b.amount * 0.10)) : 359));
+      }, 0);
+
     // Auto sync partner wallet on User document if 0 or un-synced
     if (partner && (partner.walletBalance === 0 || !partner.walletBalance) && realNetEarnings > 0) {
       partner.walletBalance = realNetEarnings;
@@ -134,6 +144,8 @@ export class PartnerDashboardService {
       kycStatus: 'approved',
       isBookingUnlocked: true,
       metrics: {
+        todayEarnings: todayEarnings,
+        todayBookingsCount: todaysJobs,
         todaysJobs: todaysJobs,
         pendingJobs: pendingJobs,
         completedJobs: completedJobs,

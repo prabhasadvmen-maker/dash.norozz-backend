@@ -50,6 +50,13 @@ export const initSockets = (httpServer) => {
         socket.partnerCategory = category || '';
         socket.partnerCity = city || 'Delhi NCR';
 
+        // BUG 1 FIX: Mark partner as online in MongoDB so dispatchNewJobOffer() can find them
+        await userRepository.model.findByIdAndUpdate(partnerId, {
+          isOnline: true,
+          isAvailable: true,
+          lastSeenAt: new Date(),
+        });
+
         // Join individual partner room
         const partnerRoom = `partner_${partnerId}`;
         socket.join(partnerRoom);
@@ -71,6 +78,8 @@ export const initSockets = (httpServer) => {
           partnerSocketsMap.set(partnerId, new Set());
         }
         partnerSocketsMap.get(partnerId).add(socket.id);
+
+        console.log(`✅ Partner [${partner.name}] (${partnerId}) is now ONLINE in DB and joined socket rooms.`);
 
         socket.emit('partner_connected', {
           success: true,
@@ -186,10 +195,12 @@ export const initSockets = (httpServer) => {
         }
 
         const partner = await userRepository.findById(partnerId);
-        if (!partner || partner.role !== ROLES.PARTNER || partner.kycStatus !== 'approved' || !partner.isOnline || partner.status !== 'active') {
+        // BUG 8 FIX: Removed strict !partner.isOnline check — a partner actively connected and clicking
+        // should always be able to claim, even if DB update hasn't propagated yet.
+        if (!partner || partner.role !== ROLES.PARTNER || partner.kycStatus !== 'approved' || partner.status !== 'active') {
           return socket.emit('claim_result', {
             success: false,
-            message: 'Only active online approved partners can claim booking requests.',
+            message: 'Only active approved partners can claim booking requests.',
           });
         }
 
@@ -376,13 +387,23 @@ export const initSockets = (httpServer) => {
     });
 
     // 4. DISCONNECT HANDLER
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
       console.log(`🔌 Client disconnected: ${socket.id}`);
       if (socket.partnerId && partnerSocketsMap.has(socket.partnerId)) {
         const socketSet = partnerSocketsMap.get(socket.partnerId);
         socketSet.delete(socket.id);
         if (socketSet.size === 0) {
+          // BUG 1 FIX: Mark partner as offline in MongoDB when ALL their sockets disconnect
           partnerSocketsMap.delete(socket.partnerId);
+          try {
+            await userRepository.model.findByIdAndUpdate(socket.partnerId, {
+              isOnline: false,
+              lastSeenAt: new Date(),
+            });
+            console.log(`🔴 Partner [${socket.partnerId}] marked OFFLINE in DB (all sockets disconnected).`);
+          } catch (e) {
+            console.warn('Failed to mark partner offline on disconnect:', e.message);
+          }
         }
       }
     });
@@ -453,6 +474,23 @@ export const dispatchNewJobOffer = async (booking) => {
       const partnerCoords = partner.locationCoordinates || partner.location;
       const bookingCoords = booking.address?.locationCoordinates || booking.locationCoordinates;
       const partnerRadius = partner.serviceRadius || partner.workRadius || partner.operatingRadius || 8;
+
+      // BUG 4 FIX: If either side has no valid coordinates, skip distance filter and include the partner.
+      // Partners/bookings without GPS data should not be silently excluded.
+      const hasPartnerCoords = partnerCoords &&
+        (partnerCoords.lat || partnerCoords.latitude) &&
+        (partnerCoords.lng || partnerCoords.longitude) &&
+        (Number(partnerCoords.lat || partnerCoords.latitude) !== 0 || Number(partnerCoords.lng || partnerCoords.longitude) !== 0);
+
+      const hasBookingCoords = bookingCoords &&
+        (bookingCoords.lat || bookingCoords.latitude) &&
+        (bookingCoords.lng || bookingCoords.longitude) &&
+        (Number(bookingCoords.lat || bookingCoords.latitude) !== 0 || Number(bookingCoords.lng || bookingCoords.longitude) !== 0);
+
+      if (!hasPartnerCoords || !hasBookingCoords) {
+        console.log(`📍 Partner [${partner.name}]: No GPS coords — skipping distance filter, including partner.`);
+        return true;
+      }
 
       const { isWithinRadius, distanceKm } = isWithinOperatingRadius(partnerCoords, bookingCoords, partnerRadius);
       if (!isWithinRadius) {
