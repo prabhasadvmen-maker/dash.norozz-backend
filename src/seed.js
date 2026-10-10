@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import { User } from './models/user.model.js';
+import { City } from './models/city.model.js';
 import { ROLES } from './constants/roles.constant.js';
 import { seedCatalogData } from './seedCatalog.js';
 
@@ -38,18 +39,24 @@ async function seed() {
       console.log('✅ Super Admin password updated to: SuperAdminPass123!');
     }
 
-
-    // 2. City Admins Seeding
+    // 2. City Admins Seeding with proper City ObjectId assignment
     const cityAdmins = [
-      { name: 'Delhi City Operations Manager', email: 'delhi.admin@norozz.com', city: 'Delhi NCR', assignedCity: 'Delhi NCR' },
-      { name: 'Bengaluru City Operations Manager', email: 'bengaluru.admin@norozz.com', city: 'Bengaluru', assignedCity: 'Bengaluru' },
-      { name: 'Mumbai City Operations Manager', email: 'mumbai.admin@norozz.com', city: 'Mumbai', assignedCity: 'Mumbai' },
-      { name: 'Hyderabad City Operations Manager', email: 'hyderabad.admin@norozz.com', city: 'Hyderabad', assignedCity: 'Hyderabad' },
-      { name: 'Pune City Operations Manager', email: 'pune.admin@norozz.com', city: 'Pune', assignedCity: 'Pune' },
-      { name: 'Jaipur City Operations Manager', email: 'jaipur.admin@norozz.com', city: 'Jaipur', assignedCity: 'Jaipur' },
+      { name: 'Prabhas singh', email: 'delhi@norozz.com', cityName: 'Delhi NCR' },
+      { name: 'Bengaluru City Operations Manager', email: 'bengaluru.admin@norozz.com', cityName: 'Bengaluru' },
+      { name: 'Mumbai City Operations Manager', email: 'mumbai.admin@norozz.com', cityName: 'Mumbai' },
+      { name: 'Hyderabad City Operations Manager', email: 'hyderabad.admin@norozz.com', cityName: 'Hyderabad' },
+      { name: 'Pune City Operations Manager', email: 'pune.admin@norozz.com', cityName: 'Pune' },
+      { name: 'Jaipur City Operations Manager', email: 'jaipur.admin@norozz.com', cityName: 'Jaipur' },
     ];
 
     for (const adminData of cityAdmins) {
+      // Find the City by name to get its ObjectId
+      const city = await City.findOne({ name: adminData.cityName });
+      if (!city) {
+        console.warn(`⚠️ City '${adminData.cityName}' not found in database. Skipping City Admin: ${adminData.email}`);
+        continue;
+      }
+
       let cityAdminUser = await User.findOne({ email: adminData.email });
       if (!cityAdminUser) {
         await User.create({
@@ -57,21 +64,21 @@ async function seed() {
           email: adminData.email,
           password: 'CityAdminPass123!',
           role: ROLES.CITY_ADMIN,
-          city: adminData.city,
-          assignedCity: null,
+          city: adminData.cityName,
+          assignedCity: city._id,
           status: 'active',
           isEmailVerified: true,
           isPhoneVerified: true,
         });
-        console.log(`✅ City Admin created: ${adminData.email} / CityAdminPass123! (${adminData.assignedCity})`);
+        console.log(`✅ City Admin created: ${adminData.email} / CityAdminPass123! (City: ${adminData.cityName})`);
       } else {
         cityAdminUser.password = 'CityAdminPass123!';
         cityAdminUser.role = ROLES.CITY_ADMIN;
-        cityAdminUser.assignedCity = null;
-        cityAdminUser.city = adminData.city;
+        cityAdminUser.assignedCity = city._id;
+        cityAdminUser.city = adminData.cityName;
         cityAdminUser.status = 'active';
         await cityAdminUser.save({ validateBeforeSave: false });
-        console.log(`✅ City Admin updated: ${adminData.email} / CityAdminPass123! (${adminData.assignedCity})`);
+        console.log(`✅ City Admin updated: ${adminData.email} / CityAdminPass123! (City: ${adminData.cityName})`);
       }
     }
 

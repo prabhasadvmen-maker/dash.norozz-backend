@@ -22,6 +22,7 @@ router.get('/revenue', cityAdminController.getRevenue);
 
 // Partner KYC & Account Management (Assigned City Scope)
 router.get('/partners', cityAdminController.getPartners);
+router.get('/customers', cityAdminController.getCustomers);
 router.patch('/partners/:id/approve', cityAdminController.approvePartner);
 router.patch('/partners/:id/reject', rejectPartnerRules, validate, cityAdminController.rejectPartner);
 router.patch('/partners/:id/documents/status', cityAdminController.updateDocumentStatus);

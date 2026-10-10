@@ -15,9 +15,11 @@ export class CityAdminService {
       const map = {};
       cities.forEach((c) => {
         if (c._id && c.name) {
-          const idStr = String(c._id).toLowerCase();
+          const idStr  = String(c._id).toLowerCase();
           const nameStr = String(c.name).toLowerCase();
-          map[idStr] = nameStr;
+          // ObjectId hex → normalized name
+          map[idStr]   = nameStr;
+          // Name → normalized name (self-map for lookup)
           map[nameStr] = nameStr;
         }
       });
@@ -30,17 +32,29 @@ export class CityAdminService {
   // Helper to match city strictly by name or ObjectId
   matchesCity(entity, assignedCity, cityMap = {}) {
     if (!entity || !assignedCity) return false;
+    
     let target = String(assignedCity).trim().toLowerCase();
+    // Resolve target via cityMap (handles both name and ObjectId)
     if (cityMap[target]) target = cityMap[target];
 
     let eCityRaw = entity.assignedCity || entity.city || entity.address?.city || '';
     if (typeof eCityRaw === 'object' && eCityRaw !== null) {
-      eCityRaw = eCityRaw.name || eCityRaw._id || '';
+      // Could be populated City object or ObjectId instance
+      eCityRaw = eCityRaw.name || String(eCityRaw._id || eCityRaw) || '';
     }
     let eCity = String(eCityRaw).trim().toLowerCase();
+    // Resolve via cityMap (handles ObjectId hex string → name)
     if (cityMap[eCity]) eCity = cityMap[eCity];
 
-    return eCity === target;
+    // Direct comparison after normalization
+    if (eCity === target) return true;
+    
+    // Also check if both are ObjectIds and match
+    if (eCity.match(/^[0-9a-fA-F]{24}$/) && target.match(/^[0-9a-fA-F]{24}$/)) {
+      return eCity === target;
+    }
+    
+    return false;
   }
 
   async populateCategoryNames(partnerList) {
@@ -121,8 +135,30 @@ export class CityAdminService {
   // 2. PARTNER MANAGEMENT & KYC VERIFICATION (Scoped STRICTLY to assignedCity Jurisdiction)
   async getCityPartners(assignedCity) {
     const cityMap = await this.getCityNameMap();
-    const allPartners = await userRepository.find({ role: ROLES.PARTNER }, '-password', { createdAt: -1 });
-    const filtered = allPartners.filter(p => this.matchesCity(p, assignedCity, cityMap));
+    const allPartners = await userRepository.find({ role: ROLES.PARTNER }, '-password', { createdAt: -1 }).populate('assignedCity', 'name');
+    
+    // Normalize assignedCity to lowercase for comparison
+    let normalizedTarget = String(assignedCity || '').trim().toLowerCase();
+    if (cityMap[normalizedTarget]) {
+      normalizedTarget = cityMap[normalizedTarget];
+    }
+    
+    const filtered = allPartners.filter(p => {
+      // Get partner's city
+      let pCityRaw = p.assignedCity || p.city || '';
+      if (typeof pCityRaw === 'object' && pCityRaw !== null) {
+        pCityRaw = pCityRaw.name || String(pCityRaw._id || pCityRaw) || '';
+      }
+      let pCity = String(pCityRaw).trim().toLowerCase();
+      
+      // Resolve via cityMap
+      if (cityMap[pCity]) {
+        pCity = cityMap[pCity];
+      }
+      
+      return pCity === normalizedTarget;
+    });
+    
     return await this.populateCategoryNames(filtered);
   }
 
@@ -268,10 +304,34 @@ export class CityAdminService {
     return { message: `Partner '${partner.name}' activated successfully`, partner };
   }
 
+  // 2.5 CITY CUSTOMERS
+  async getCityCustomers(assignedCity) {
+    const cityMap = await this.getCityNameMap();
+    let targetCity = String(assignedCity || '').trim().toLowerCase();
+    if (cityMap[targetCity]) targetCity = cityMap[targetCity];
+
+    if (!targetCity) return [];
+
+    const allCustomers = await userRepository.find({ role: ROLES.CUSTOMER }, '-password', { createdAt: -1 });
+    
+    return allCustomers.filter(c => {
+      let cCity = String(c.assignedCity || c.city || '').trim().toLowerCase();
+      if (typeof c.assignedCity === 'object' && c.assignedCity !== null) {
+        cCity = String(c.assignedCity.name || c.assignedCity._id || c.assignedCity).trim().toLowerCase();
+      }
+      if (cityMap[cCity]) cCity = cityMap[cCity];
+      return cCity === targetCity;
+    });
+  }
+
   // 3. CITY BOOKING DISPATCH & MANAGEMENT
   async getCityBookings(assignedCity) {
     const { Booking } = await import('../models/booking.model.js');
-    const targetCity = String(assignedCity || 'Delhi NCR').trim().toLowerCase();
+    const cityMap = await this.getCityNameMap();
+    let targetCity = String(assignedCity || '').trim().toLowerCase();
+    if (cityMap[targetCity]) targetCity = cityMap[targetCity];
+
+    if (!targetCity) return [];
 
     const allBookings = await Booking.find({})
       .populate('customer', 'name email phone city assignedCity')
@@ -281,15 +341,18 @@ export class CityAdminService {
       .sort({ createdAt: -1 })
       .lean();
 
-    const filtered = allBookings.filter((b) => {
-      const bCity = String(b.city || b.address?.city || '').trim().toLowerCase();
-      const cCity = typeof b.customer === 'object' ? String(b.customer?.assignedCity || b.customer?.city || '').trim().toLowerCase() : '';
-      const pCity = typeof b.partner === 'object' ? String(b.partner?.assignedCity || b.partner?.city || '').trim().toLowerCase() : '';
+    return allBookings.filter((b) => {
+      let bCity = String(b.city || b.address?.city || '').trim().toLowerCase();
+      if (cityMap[bCity]) bCity = cityMap[bCity];
+
+      let cCity = typeof b.customer === 'object' ? String(b.customer?.assignedCity || b.customer?.city || '').trim().toLowerCase() : '';
+      if (cityMap[cCity]) cCity = cityMap[cCity];
+
+      let pCity = typeof b.partner === 'object' ? String(b.partner?.assignedCity || b.partner?.city || '').trim().toLowerCase() : '';
+      if (cityMap[pCity]) pCity = cityMap[pCity];
 
       return bCity === targetCity || cCity === targetCity || pCity === targetCity;
     });
-
-    return filtered.length > 0 ? filtered : allBookings;
   }
 
   async assignBooking(bookingId, partnerId, assignedCity) {

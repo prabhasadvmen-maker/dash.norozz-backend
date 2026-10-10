@@ -1,7 +1,7 @@
 import { verifyAccessToken } from '../helpers/jwt.helper.js';
 import { ApiError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
-import { userRepository } from '../repositories/user.repository.js';
+import { User } from '../models/user.model.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 
 /**
@@ -18,7 +18,7 @@ export const verifyJWT = asyncHandler(async (req, res, next) => {
 
   try {
     const decoded = verifyAccessToken(token);
-    const user = await userRepository.findById(decoded.id);
+    const user = await User.findById(decoded.id).populate('assignedCity', 'name');
 
     if (!user) {
       throw new ApiError(HTTP_STATUS.UNAUTHORIZED, 'Invalid Access Token: User not found');
