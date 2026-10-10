@@ -135,7 +135,7 @@ export class CityAdminService {
   // 2. PARTNER MANAGEMENT & KYC VERIFICATION (Scoped STRICTLY to assignedCity Jurisdiction)
   async getCityPartners(assignedCity) {
     const cityMap = await this.getCityNameMap();
-    const allPartners = await userRepository.find({ role: ROLES.PARTNER }, '-password', { createdAt: -1 }).populate('assignedCity', 'name');
+    const allPartners = await userRepository.find({ role: ROLES.PARTNER }, '-password', { createdAt: -1 });
     
     // Normalize assignedCity to lowercase for comparison
     let normalizedTarget = String(assignedCity || '').trim().toLowerCase();
@@ -159,7 +159,23 @@ export class CityAdminService {
       return pCity === normalizedTarget;
     });
     
-    return await this.populateCategoryNames(filtered);
+    // Populate city names for filtered partners
+    const partnersWithCities = await Promise.all(
+      filtered.map(async (p) => {
+        const pObj = typeof p.toObject === 'function' ? p.toObject() : { ...p };
+        if (pObj.assignedCity && typeof pObj.assignedCity === 'string' && pObj.assignedCity.match(/^[0-9a-fA-F]{24}$/)) {
+          try {
+            const city = await City.findById(pObj.assignedCity).lean();
+            if (city) pObj.assignedCity = city.name;
+          } catch (err) {
+            // ignore
+          }
+        }
+        return pObj;
+      })
+    );
+    
+    return await this.populateCategoryNames(partnersWithCities);
   }
 
   async approvePartner(partnerId, assignedCity) {
