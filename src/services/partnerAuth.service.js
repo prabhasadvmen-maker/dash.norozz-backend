@@ -145,11 +145,27 @@ export const getPartnerOnboardingStatus = (user) => {
   };
 };
 
+// Demo/test login for QA and Apple App Review. Set PARTNER_TEST_LOGIN_ENABLED=false to disable.
+const TEST_PARTNER_PHONE = normalizePhoneNumber(process.env.PARTNER_TEST_PHONE || '9999999999');
+const TEST_PARTNER_OTP = process.env.PARTNER_TEST_OTP || '123456';
+const isTestPartnerLogin = (cleanPhone) =>
+  process.env.PARTNER_TEST_LOGIN_ENABLED !== 'false' && cleanPhone === TEST_PARTNER_PHONE;
+
 export class PartnerAuthService {
   // 1a. REQUEST PARTNER OTP LOGIN
   async requestOtpLogin(phone) {
     const cleanPhone = normalizePhoneNumber(phone);
     const existingUser = await userRepository.findByPhone(cleanPhone);
+
+    if (isTestPartnerLogin(cleanPhone)) {
+      return {
+        phone: cleanPhone,
+        nextStep: 'VERIFY_OTP',
+        onboardingStatus: getPartnerOnboardingStatus(existingUser).onboardingStatus,
+        message: 'OTP sent successfully to mobile number',
+      };
+    }
+
     if (existingUser && existingUser.role !== ROLES.PARTNER) {
       throw new ApiError(
         HTTP_STATUS.FORBIDDEN,
@@ -200,13 +216,26 @@ export class PartnerAuthService {
   // 1b. VERIFY PARTNER OTP LOGIN
   async verifyOtpLogin(phone, otp) {
     const cleanPhone = normalizePhoneNumber(phone);
-    const validOtp = await otpRepository.findLatestValidOtp(cleanPhone, 'partnerLogin');
-    if (!validOtp || validOtp.otp !== otp) {
-      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Invalid or expired OTP code');
+    const isTestLogin = isTestPartnerLogin(cleanPhone);
+    let validOtp = null;
+    if (isTestLogin) {
+      if (String(otp) !== TEST_PARTNER_OTP) {
+        throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Invalid or expired OTP code');
+      }
+    } else {
+      validOtp = await otpRepository.findLatestValidOtp(cleanPhone, 'partnerLogin');
+      if (!validOtp || validOtp.otp !== otp) {
+        throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Invalid or expired OTP code');
+      }
     }
 
     let isNewPartner = false;
     let user = await userRepository.findByPhone(cleanPhone);
+
+    // Demo number may already exist as a customer; switch it to partner for testing
+    if (isTestLogin && user && user.role !== ROLES.PARTNER) {
+      user.role = ROLES.PARTNER;
+    }
 
     if (user && user.role !== ROLES.PARTNER) {
       throw new ApiError(
@@ -284,7 +313,7 @@ export class PartnerAuthService {
 
     await user.save({ validateBeforeSave: false });
 
-    await otpRepository.markAsVerified(validOtp._id);
+    if (validOtp) await otpRepository.markAsVerified(validOtp._id);
 
     const authResult = await this.generateTokens(user);
 
