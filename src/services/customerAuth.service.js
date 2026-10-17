@@ -107,7 +107,7 @@ export class CustomerAuthService {
     // Dispatch Email OTP via Brevo or Mobile SMS OTP
     await notificationService.dispatchOtp(normalizedInput, generatedOtp);
 
-    return { emailOrPhone: normalizedInput, otp: generatedOtp, message: 'OTP sent successfully for instant login' };
+    return { emailOrPhone: normalizedInput, message: 'OTP sent successfully for instant login' };
   }
 
   async verifyOtpLogin(emailOrPhone, otp) {
@@ -183,6 +183,22 @@ export class CustomerAuthService {
     const cleanId = emailOrPhone.trim();
     const isEmail = cleanId.includes('@');
 
+    const recentCount = await otpRepository.countRecentOtps(cleanId, 'secondaryVerify', OTP_WINDOW_MS);
+    if (recentCount >= OTP_MAX_PER_WINDOW) {
+      throw new ApiError(
+        HTTP_STATUS.TOO_MANY_REQUESTS,
+        `OTP limit reached. Maximum ${OTP_MAX_PER_WINDOW} OTPs allowed per 10 minutes. Please try again later.`
+      );
+    }
+
+    const recentOtp = await otpRepository.findRecentOtp(cleanId, 'secondaryVerify', OTP_COOLDOWN_SEC);
+    if (recentOtp) {
+      throw new ApiError(
+        HTTP_STATUS.TOO_MANY_REQUESTS,
+        `OTP already sent. Please wait ${OTP_COOLDOWN_SEC} seconds before requesting again.`
+      );
+    }
+
     const currentUser = await userRepository.findById(customerId);
     if (!currentUser) {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Customer account not found');
@@ -219,7 +235,7 @@ export class CustomerAuthService {
     });
 
     await notificationService.dispatchOtp(cleanId, generatedOtp);
-    return { emailOrPhone: cleanId, otp: generatedOtp, message: `Verification OTP sent to ${cleanId}` };
+    return { emailOrPhone: cleanId, message: `Verification OTP sent to ${cleanId}` };
   }
 
   async verifySecondaryOtp(customerId, emailOrPhone, otp) {
@@ -254,6 +270,22 @@ export class CustomerAuthService {
 
   // 4. FORGOT & RESET PASSWORD
   async forgotPassword(email) {
+    const recentCount = await otpRepository.countRecentOtps(email, 'resetPassword', OTP_WINDOW_MS);
+    if (recentCount >= OTP_MAX_PER_WINDOW) {
+      throw new ApiError(
+        HTTP_STATUS.TOO_MANY_REQUESTS,
+        `OTP limit reached. Maximum ${OTP_MAX_PER_WINDOW} OTPs allowed per 10 minutes. Please try again later.`
+      );
+    }
+
+    const recentOtp = await otpRepository.findRecentOtp(email, 'resetPassword', OTP_COOLDOWN_SEC);
+    if (recentOtp) {
+      throw new ApiError(
+        HTTP_STATUS.TOO_MANY_REQUESTS,
+        `OTP already sent. Please wait ${OTP_COOLDOWN_SEC} seconds before requesting again.`
+      );
+    }
+
     const user = await userRepository.findByEmail(email);
     if (!user || user.role !== ROLES.CUSTOMER) {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'No customer account found with this email');
@@ -272,7 +304,7 @@ export class CustomerAuthService {
     // Send Reset Password Email via Brevo
     await notificationService.sendEmailOtp(email, generatedOtp);
 
-    return { email, otp: generatedOtp, message: 'Password reset OTP sent to registered email' };
+    return { email, message: 'Password reset OTP sent to registered email' };
   }
 
   async resetPassword(email, otp, newPassword) {
