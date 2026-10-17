@@ -23,6 +23,15 @@ export const getClientIp = (req) => {
  * Prevents OTP Bombing, Brute-Force Password Attacks, and Credential Stuffing.
  * Uses keyGenerator with getClientIp so each device/IP is isolated and tracked separately.
  */
+/**
+ * Per-number OTP rate limit config.
+ * Production: max 3 OTPs per 10 minutes per number, 60s cooldown between each.
+ * Development: relaxed limits.
+ */
+const OTP_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+const OTP_MAX_PER_WINDOW = process.env.NODE_ENV === 'production' ? 3 : 10;
+const OTP_COOLDOWN_SEC = process.env.NODE_ENV === 'production' ? 60 : 10;
+
 export const otpAuthRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes window
   max: 10, // Limit each client IP to 10 OTP/Auth attempts per window
@@ -37,10 +46,7 @@ export const otpAuthRateLimiter = rateLimit({
   },
 });
 
-/**
- * General API Rate Limiter
- * Protects server against DDoS and API scraping per client IP
- */
+export { OTP_WINDOW_MS, OTP_MAX_PER_WINDOW, OTP_COOLDOWN_SEC };
 export const generalApiRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes window
   max: process.env.NODE_ENV === 'production' ? 500 : 2000, // Allow high request limit in dev mode

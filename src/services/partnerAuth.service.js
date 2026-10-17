@@ -10,6 +10,7 @@ import { ApiError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { ROLES } from '../constants/roles.constant.js';
 import { normalizePhoneNumber, generatePartnerUserId } from '../utils/phone.util.js';
+import { OTP_WINDOW_MS, OTP_MAX_PER_WINDOW, OTP_COOLDOWN_SEC } from '../middleware/rateLimiter.middleware.js';
 import { PanVerificationService } from './zoop/pan.service.js';
 import { BankAccountVerificationService } from './zoop/bankAccount.service.js';
 import { DrivingLicenseVerificationService } from './zoop/drivingLicense.service.js';
@@ -153,6 +154,22 @@ export class PartnerAuthService {
       throw new ApiError(
         HTTP_STATUS.FORBIDDEN,
         `This mobile number is registered as a ${existingUser.role} account. Please use the appropriate portal.`
+      );
+    }
+
+    const recentCount = await otpRepository.countRecentOtps(cleanPhone, 'partnerLogin', OTP_WINDOW_MS);
+    if (recentCount >= OTP_MAX_PER_WINDOW) {
+      throw new ApiError(
+        HTTP_STATUS.TOO_MANY_REQUESTS,
+        `OTP limit reached. Maximum ${OTP_MAX_PER_WINDOW} OTPs allowed per 10 minutes. Please try again later.`
+      );
+    }
+
+    const recentOtp = await otpRepository.findRecentOtp(cleanPhone, 'partnerLogin', OTP_COOLDOWN_SEC);
+    if (recentOtp) {
+      throw new ApiError(
+        HTTP_STATUS.TOO_MANY_REQUESTS,
+        `OTP already sent. Please wait ${OTP_COOLDOWN_SEC} seconds before requesting again.`
       );
     }
 

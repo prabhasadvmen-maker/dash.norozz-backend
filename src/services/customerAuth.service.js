@@ -8,6 +8,7 @@ import { notificationService } from './notificationService.js';
 import { storageService } from './storage.service.js';
 import { r2StorageService } from './r2Storage.service.js';
 import { normalizePhoneNumber } from '../utils/phone.util.js';
+import { OTP_WINDOW_MS, OTP_MAX_PER_WINDOW, OTP_COOLDOWN_SEC } from '../middleware/rateLimiter.middleware.js';
 
 export class CustomerAuthService {
 
@@ -76,6 +77,22 @@ export class CustomerAuthService {
       );
     }
 
+    const recentCount = await otpRepository.countRecentOtps(normalizedInput, 'login', OTP_WINDOW_MS);
+    if (recentCount >= OTP_MAX_PER_WINDOW) {
+      throw new ApiError(
+        HTTP_STATUS.TOO_MANY_REQUESTS,
+        `OTP limit reached. Maximum ${OTP_MAX_PER_WINDOW} OTPs allowed per 10 minutes. Please try again later.`
+      );
+    }
+
+    const recentOtp = await otpRepository.findRecentOtp(normalizedInput, 'login', OTP_COOLDOWN_SEC);
+    if (recentOtp) {
+      throw new ApiError(
+        HTTP_STATUS.TOO_MANY_REQUESTS,
+        `OTP already sent. Please wait ${OTP_COOLDOWN_SEC} seconds before requesting again.`
+      );
+    }
+
     const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
     const otpExpirySec = Number(process.env.OTP_EXPIRY_SECONDS) || 300;
     const expiresAt = new Date(Date.now() + otpExpirySec * 1000);
@@ -122,7 +139,7 @@ export class CustomerAuthService {
         name: '',
         email: isEmail ? cleanId.toLowerCase() : '',
         phone: !isEmail ? cleanId : '',
-        password: 'AutoOtpPassword123!',
+        password: (await import('crypto')).randomBytes(16).toString('hex'),
         role: ROLES.CUSTOMER,
         city: '',
         status: 'active',
