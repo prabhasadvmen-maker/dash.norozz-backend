@@ -21,19 +21,16 @@ export const errorHandler = (err, req, res, next) => {
     }
   }
 
+  // Never leak internals of unexpected (5xx) errors to API clients in production
+  const isServerError = error.statusCode >= 500;
+  if (isServerError) console.error('Unhandled server error:', err?.stack || err);
+
   const response = {
     statusCode: error.statusCode,
     success: false,
-    message: error.message,
+    message: isServerError && process.env.NODE_ENV === 'production' ? 'Something went wrong. Please try again.' : error.message,
     errors: error.errors?.length ? error.errors : undefined,
   };
-
-  // Ensure CORS header is attached even on unhandled error responses
-  const origin = req.headers.origin;
-  if (origin) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-  }
 
   return res.status(error.statusCode).json(response);
 };

@@ -94,6 +94,10 @@ export class KycController extends BaseController {
 
   // 8. GET KYC STATUS
   getStatus = asyncHandler(async (req, res) => {
+    const isAdmin = ['superadmin', 'admin', 'cityAdmin'].includes(req.user.role);
+    if (req.params.partnerId && !isAdmin && String(req.params.partnerId) !== String(req.user._id)) {
+      throw new ApiError(HTTP_STATUS.FORBIDDEN, 'You can only view your own KYC status');
+    }
     const targetPartnerId = req.params.partnerId || req.user._id;
     const statusObj = await KycStatusService.calculateOverallKycStatus(targetPartnerId);
     return this.sendSuccess(res, statusObj, 'KYC status retrieved successfully');

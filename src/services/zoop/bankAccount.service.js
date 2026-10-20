@@ -1,4 +1,4 @@
-import { ZoopClient, isRealZoopConfigured } from './zoopClient.js';
+import { ZoopClient, isRealZoopConfigured, isKycSimulationAllowed, assertKycProviderAvailable } from './zoopClient.js';
 import { User } from '../../models/user.model.js';
 import { KycVerification } from '../../models/kycVerification.model.js';
 import { KycAuditService } from '../kyc/kycAudit.service.js';
@@ -52,10 +52,11 @@ export class BankAccountVerificationService {
         // Fallback for valid account format in test sandbox if HTTP 404/error occurs
         const isValidAccount = cleanAccount.length >= 8;
         const isValidIfsc = Boolean(cleanIfsc.match(/^[A-Z]{4}0[A-Z0-9]{6}$/));
-        isVerified = isValidAccount && isValidIfsc;
+        isVerified = isKycSimulationAllowed() && isValidAccount && isValidIfsc;
         rawResponse = { error: err.message, sandboxFallback: isVerified };
       }
     } else {
+      assertKycProviderAvailable();
       console.log(`[ZOOP Bank Simulation] Verified Account ${this.maskAccount(cleanAccount)} for partner ${partnerId}`);
       rawResponse = { isSimulation: true, accountNumber: this.maskAccount(cleanAccount), ifscCode: cleanIfsc, status: 'VERIFIED' };
     }

@@ -1,4 +1,4 @@
-import { ZoopClient, isRealZoopConfigured } from './zoopClient.js';
+import { ZoopClient, isRealZoopConfigured, isKycSimulationAllowed, assertKycProviderAvailable } from './zoopClient.js';
 import { User } from '../../models/user.model.js';
 import { KycVerification } from '../../models/kycVerification.model.js';
 import { KycAuditService } from '../kyc/kycAudit.service.js';
@@ -44,6 +44,7 @@ export class FaceMatchService {
         rawResponse = { error: err.message };
       }
     } else {
+      assertKycProviderAvailable();
       console.log(`[ZOOP Face Match Simulation] Match score ${score * 100}% for partner ${partnerId}`);
       rawResponse = { isSimulation: true, match_score: score, status: 'VERIFIED' };
     }

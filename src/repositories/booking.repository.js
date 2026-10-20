@@ -25,8 +25,8 @@ export class BookingRepository extends BaseRepository {
 
   async getGrossRevenue() {
     const result = await this.model.aggregate([
-      { $match: { status: 'completed' } },
-      { $group: { _id: null, totalRevenue: { $sum: '$amount' } } },
+      { $match: { status: 'Completed' } },
+      { $group: { _id: null, totalRevenue: { $sum: { $ifNull: ['$financialSnapshot.customerPayable', '$amount'] } } } },
     ]);
     return result[0]?.totalRevenue || 0;
   }

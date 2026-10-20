@@ -10,7 +10,8 @@
     "seed": "node src/seed.js",
     "seed:catalog": "node src/seed/norozzServiceSeed.js",
     "seed:enriched": "node src/seed/norozzEnrichedServiceSeed.js",
-    "seed:skills": "node src/database/seedSkills.js"
+    "seed:skills": "node src/database/seedSkills.js",
+    "test:e2e": "node tests/e2e.booking.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1106.0",

@@ -355,7 +355,7 @@ export class CustomerAuthService {
   }
 
   async updateProfile(customerId, updateData, file = null) {
-    const allowedFields = ['name', 'email', 'phone', 'dob', 'gender', 'profileImage', 'city', 'state', 'country', 'address', 'isProfileCompleted', 'isEmailVerified', 'isPhoneVerified', 'referredBy', 'usedReferralCode'];
+    const allowedFields = ['name', 'email', 'phone', 'dob', 'gender', 'profileImage', 'city', 'state', 'country', 'address', 'referredBy', 'usedReferralCode'];
     const sanitizedData = {};
 
     for (const field of allowedFields) {
@@ -365,8 +365,11 @@ export class CustomerAuthService {
     }
 
     const { User } = await import('../models/user.model.js');
+    delete sanitizedData.referredBy;
+    delete sanitizedData.usedReferralCode;
+    const currentUser = await User.findById(customerId).select('referredBy referredByPartner');
     const inputRefCode = updateData.referredBy || updateData.usedReferralCode || updateData.referralCodeUsed;
-    if (inputRefCode) {
+    if (inputRefCode && !currentUser?.referredBy && !currentUser?.referredByPartner) {
       const cleanRefCode = String(inputRefCode).trim().toUpperCase();
       const referrer = await User.findOne({ referralCode: cleanRefCode });
       if (referrer && referrer._id.toString() !== customerId.toString()) {
@@ -424,13 +427,23 @@ export class CustomerAuthService {
     const user = await userRepository.findById(customerId);
     if (!user) throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Customer not found');
 
+    const addressLine = String(addressData.addressLine || addressData.street || addressData.address || '').trim();
+    const city = String(addressData.city || '').trim();
+    if (!addressLine) throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Address is required');
+    if (!city) throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'City is required');
+
+    const lat = Number(addressData.locationCoordinates?.lat ?? addressData.lat);
+    const lng = Number(addressData.locationCoordinates?.lng ?? addressData.lng);
+    const hasCoords = Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 && (lat !== 0 || lng !== 0);
+
     const formatted = {
       title: addressData.title || addressData.label || 'Home',
-      addressLine: addressData.addressLine || addressData.street || addressData.address || 'Saved Address Location',
-      city: addressData.city || 'Mumbai',
-      state: addressData.state || 'Maharashtra',
-      pincode: addressData.pincode || addressData.zipCode || '400053',
+      addressLine,
+      city,
+      state: addressData.state || '',
+      pincode: addressData.pincode || addressData.zipCode || '',
       isDefault: Boolean(addressData.isDefault || user.addresses.length === 0),
+      locationCoordinates: hasCoords ? { lat, lng } : { lat: null, lng: null },
     };
 
     if (formatted.isDefault) {
@@ -468,6 +481,12 @@ export class CustomerAuthService {
       pincode: updateData.pincode || updateData.zipCode || addr.pincode,
       isDefault: updateData.isDefault !== undefined ? Boolean(updateData.isDefault) : addr.isDefault,
     };
+
+    const ulat = Number(updateData.locationCoordinates?.lat ?? updateData.lat);
+    const ulng = Number(updateData.locationCoordinates?.lng ?? updateData.lng);
+    if (Number.isFinite(ulat) && Number.isFinite(ulng) && (ulat !== 0 || ulng !== 0)) {
+      formatted.locationCoordinates = { lat: ulat, lng: ulng };
+    }
 
     if (formatted.isDefault) {
       user.addresses.forEach(a => { a.isDefault = false; });

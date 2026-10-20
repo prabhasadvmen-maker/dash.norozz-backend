@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import mongoose from 'mongoose';
 import { userRepository } from '../repositories/user.repository.js';
 import { bookingRepository } from '../repositories/booking.repository.js';
@@ -8,8 +9,23 @@ import { r2StorageService } from './r2Storage.service.js';
 import bcrypt from 'bcryptjs';
 import { ApiError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
-import { isWithinOperatingRadius } from '../utils/distance.util.js';
-import { dispatchNewJobOffer } from '../sockets/index.js';
+import { dispatchNewJobOffer, notifyBookingUpdate, emitToUser } from '../sockets/index.js';
+import { isPartnerEligibleForBooking } from '../utils/partnerEligibility.js';
+import { financialEngineService } from './financialEngine.service.js';
+import { User } from '../models/user.model.js';
+import { SystemSettings } from '../models/systemSettings.model.js';
+import { PlatformAccount } from '../models/platformAccount.model.js';
+
+const netOf = (b) => Number(b?.financialSnapshot?.partnerNetEarning ?? 0);
+
+// A partner may only see customer contact details for jobs that are actually assigned to them
+const forPartner = (booking, partnerId) => {
+  const obj = typeof booking.toObject === 'function' ? booking.toObject() : { ...booking };
+  if (String(obj.partner?._id || obj.partner || '') !== String(partnerId)) {
+    if (obj.customer && typeof obj.customer === 'object') obj.customer = { _id: obj.customer._id, name: obj.customer.name };
+  }
+  return obj;
+};
 
 export class PartnerDashboardService {
 
@@ -52,6 +68,15 @@ export class PartnerDashboardService {
     }
     const isApproved = partner.kycStatus === 'approved';
     const isActive = partner.status === 'active';
+    const emptyMetrics = {
+      todaysJobs: 0,
+      pendingJobs: 0,
+      completedJobs: 0,
+      walletBalance: 0,
+      monthlyEarnings: 0,
+      rating: '0.0',
+      activeWorkers: 0,
+    };
 
     if (!isActive) {
       return {
@@ -59,15 +84,7 @@ export class PartnerDashboardService {
         kycStatus: partner.kycStatus,
         status: partner.status,
         isBookingUnlocked: false,
-        metrics: {
-          todaysJobs: 0,
-          pendingJobs: 0,
-          completedJobs: 0,
-          walletBalance: partner.walletBalance || 0,
-          monthlyEarnings: 0,
-          rating: '0.0',
-          activeWorkers: 0,
-        },
+        metrics: { ...emptyMetrics, walletBalance: partner.walletBalance || 0 },
         recentBookings: [],
       };
     }
@@ -77,85 +94,50 @@ export class PartnerDashboardService {
         noticeMessage: 'Your account is under verification.',
         kycStatus: partner.kycStatus,
         isBookingUnlocked: false,
-        metrics: {
-          todaysJobs: 0,
-          pendingJobs: 0,
-          completedJobs: 0,
-          walletBalance: 0,
-          monthlyEarnings: 0,
-          rating: '0.0',
-          activeWorkers: 0,
-        },
+        metrics: emptyMetrics,
         recentBookings: [],
       };
     }
 
-    // Helper query to match partner by ObjectId or String ID
-    const partnerFilter = { $or: [{ partner: partner._id }, { partner: String(partner._id) }] };
-
-    // If Approved Partner: Fetch real booking stats
-    const partnerBookings = await bookingRepository.model
-      .find(partnerFilter)
-      .populate('category', 'name slug image')
-      .populate('service', 'name slug price finalPrice duration')
-      .populate('customer', 'name email phone')
-      .sort({ createdAt: -1 });
-
-    const todaysJobs = partnerBookings.filter(b => ['Assigned', 'Accepted', 'On The Way', 'Started', 'assigned', 'accepted', 'in_progress'].includes(b.status)).length;
-    const pendingJobs = partnerBookings.filter(b => ['Pending', 'pending'].includes(b.status)).length;
-    const completedBookingsList = partnerBookings.filter(b => ['Completed', 'completed'].includes(b.status));
-    const completedJobs = completedBookingsList.length;
-
-    const realNetEarnings = completedBookingsList.reduce((sum, b) => {
-      const snapshot = b.financialSnapshot || {};
-      const net = snapshot.partnerNetEarning ?? (b.amount ? (b.amount - Math.round(b.amount * 0.10)) : 359);
-      return sum + net;
-    }, 0);
-
-    const activeWalletBalance = (partner?.walletBalance && partner.walletBalance > 0)
-      ? partner.walletBalance
-      : ((partner?.availableBalance && partner.availableBalance > 0)
-          ? partner.availableBalance
-          : realNetEarnings);
-
-    const activeLifetimeEarnings = (partner?.lifetimeEarnings && partner.lifetimeEarnings > 0)
-      ? partner.lifetimeEarnings
-      : realNetEarnings;
+    const populate = (q) =>
+      q
+        .populate('category', 'name slug image')
+        .populate('service', 'name slug price finalPrice duration')
+        .populate('customer', 'name email phone');
 
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
+    const startOfMonth = new Date(startOfToday.getFullYear(), startOfToday.getMonth(), 1);
 
-    const todayEarnings = completedBookingsList
-      .filter(b => new Date(b.createdAt) >= startOfToday)
-      .reduce((sum, b) => {
-        const snapshot = b.financialSnapshot || {};
-        return sum + (snapshot.partnerNetEarning ?? (b.amount ? (b.amount - Math.round(b.amount * 0.10)) : 359));
-      }, 0);
+    const [recentBookings, activeCount, completedBookings, openOffers, fresh] = await Promise.all([
+      populate(bookingRepository.model.find({ partner: partner._id }).sort({ createdAt: -1 }).limit(10)),
+      bookingRepository.model.countDocuments({ partner: partner._id, status: { $in: ['Assigned', 'Accepted', 'On The Way', 'Started'] } }),
+      bookingRepository.model.find({ partner: partner._id, status: 'Completed' }).select('financialSnapshot completedAt createdAt'),
+      this.getPendingBookings(partner),
+      User.findById(partner._id).select('walletBalance lifetimeEarnings averageRating totalRatings'),
+    ]);
 
-    // Auto sync partner wallet on User document if 0 or un-synced
-    if (partner && (partner.walletBalance === 0 || !partner.walletBalance) && realNetEarnings > 0) {
-      partner.walletBalance = realNetEarnings;
-      partner.availableBalance = realNetEarnings;
-      partner.lifetimeEarnings = activeLifetimeEarnings;
-      await partner.save().catch(() => {});
-    }
+    const when = (b) => new Date(b.completedAt || b.createdAt);
+    const todayEarnings = completedBookings.filter((b) => when(b) >= startOfToday).reduce((sum, b) => sum + netOf(b), 0);
+    const monthlyEarnings = completedBookings.filter((b) => when(b) >= startOfMonth).reduce((sum, b) => sum + netOf(b), 0);
 
     return {
       noticeMessage: 'Account Active & Operational',
       kycStatus: 'approved',
       isBookingUnlocked: true,
       metrics: {
-        todayEarnings: todayEarnings,
-        todayBookingsCount: todaysJobs,
-        todaysJobs: todaysJobs,
-        pendingJobs: pendingJobs,
-        completedJobs: completedJobs,
-        walletBalance: activeWalletBalance,
-        monthlyEarnings: activeLifetimeEarnings,
-        rating: partner?.averageRating ? partner.averageRating.toFixed(1) : '5.0',
+        todayEarnings,
+        todayBookingsCount: activeCount,
+        todaysJobs: activeCount,
+        pendingJobs: openOffers.length,
+        completedJobs: completedBookings.length,
+        walletBalance: fresh?.walletBalance || 0,
+        monthlyEarnings,
+        lifetimeEarnings: fresh?.lifetimeEarnings || 0,
+        rating: fresh?.totalRatings > 0 ? Number(fresh.averageRating).toFixed(1) : '0.0',
         activeWorkers: 1,
       },
-      recentBookings: partnerBookings.slice(0, 10),
+      recentBookings,
     };
   }
 
@@ -176,57 +158,24 @@ export class PartnerDashboardService {
   async getPendingBookings(partner) {
     this.checkKycApproved(partner);
 
-    const rawCityVal = partner.assignedCity?.name || (typeof partner.assignedCity === 'string' ? partner.assignedCity : null) || partner.city || 'Jaunpur';
-    const partnerCity = String(rawCityVal || 'Jaunpur').trim().toLowerCase();
-    const partnerCatId = partner.category?._id ? String(partner.category._id) : String(partner.category || '');
-    const partnerCats = Array.isArray(partner.categories) ? partner.categories.map((c) => String(c._id || c)) : [];
+    const partnerDoc = await User.findById(partner._id).populate('assignedCity', 'name');
 
-    // Query all open unassigned pending bookings from DB
+    // Only PAID, unclaimed, open offers this partner has not already turned down
     const openBookings = await bookingRepository.model
       .find({
         partner: null,
-        status: { $in: ['Pending', 'pending'] },
+        status: 'Pending',
+        paymentStatus: 'paid',
+        financialStatus: 'AMOUNT_HELD',
+        cancelledByPartners: { $ne: partner._id },
       })
       .populate('category', 'name slug image')
       .populate('service', 'name slug price finalPrice duration')
-      .populate('customer', 'name email phone')
-      .sort({ createdAt: -1 });
+      .populate('customer', 'name')
+      .sort({ createdAt: -1 })
+      .limit(100);
 
-    // Filter strictly by Category, Offered Services, and Work Area / City
-    return openBookings.filter((b) => {
-      // 1. Category check
-      const bCatId = b.category?._id ? String(b.category._id) : String(b.category || '');
-      const isCatMatch = !partnerCatId || partnerCatId === bCatId || partnerCats.includes(bCatId);
-      if (!isCatMatch) return false;
-
-      // 2. Offered Services check: If partner selected specific offeredServices, verify serviceId is present
-      if (Array.isArray(partner.offeredServices) && partner.offeredServices.length > 0 && b.service) {
-        const bSvcId = b.service?._id ? String(b.service._id) : String(b.service);
-        const pServices = partner.offeredServices.map((s) => String(s._id || s));
-        if (!pServices.includes(bSvcId)) return false;
-      }
-
-      // 3. Geographic Operating Radius Match (locationCoordinates distance <= serviceRadius KM)
-      const partnerCoords = partner.locationCoordinates || partner.location;
-      const bookingCoords = b.address?.locationCoordinates || b.locationCoordinates;
-      const partnerRadius = partner.serviceRadius || partner.workRadius || partner.operatingRadius || 8;
-
-      const hasPartnerCoords = partnerCoords &&
-        (partnerCoords.lat || partnerCoords.latitude) &&
-        (Number(partnerCoords.lat || partnerCoords.latitude) !== 0 || Number(partnerCoords.lng || partnerCoords.longitude) !== 0);
-
-      const hasBookingCoords = bookingCoords &&
-        (bookingCoords.lat || bookingCoords.latitude) &&
-        (Number(bookingCoords.lat || bookingCoords.latitude) !== 0 || Number(bookingCoords.lng || bookingCoords.longitude) !== 0);
-
-      // If either side has no valid GPS coords, skip distance filter and include
-      if (!hasPartnerCoords || !hasBookingCoords) return true;
-
-      const { isWithinRadius } = isWithinOperatingRadius(partnerCoords, bookingCoords, partnerRadius);
-      if (!isWithinRadius) return false;
-
-      return true;
-    });
+    return openBookings.filter((b) => isPartnerEligibleForBooking(partnerDoc, b));
   }
 
   async getCompletedBookings(partner) {
@@ -244,36 +193,36 @@ export class PartnerDashboardService {
 
   async getCancelledBookings(partner) {
     this.checkKycApproved(partner);
-    return await bookingRepository.model
+    const list = await bookingRepository.model
       .find({
         $or: [
-          { partner: partner._id },
-          { partner: String(partner._id) },
-          { cancelledByPartners: partner._id }
+          { partner: partner._id, status: { $in: ['Cancelled', 'Refunded'] } },
+          { cancelledByPartners: partner._id },
         ],
       })
       .populate('category', 'name slug image')
       .populate('service', 'name slug price finalPrice duration')
       .populate('customer', 'name email phone')
       .sort({ createdAt: -1 });
+    return list.map((b) => forPartner(b, partner._id));
   }
 
   async getAllBookings(partner) {
     this.checkKycApproved(partner);
 
     // Return this partner's own claimed / assigned bookings AND bookings cancelled by this partner
-    return await bookingRepository.model
+    const list = await bookingRepository.model
       .find({
         $or: [
           { partner: partner._id },
-          { partner: String(partner._id) },
-          { cancelledByPartners: partner._id }
+          { cancelledByPartners: partner._id },
         ],
       })
       .populate('category', 'name slug image')
       .populate('service', 'name slug price finalPrice duration')
       .populate('customer', 'name email phone rating createdAt')
       .sort({ createdAt: -1 });
+    return list.map((b) => forPartner(b, partner._id));
   }
 
   async getBookingDetails(partner, bookingId) {
@@ -287,7 +236,7 @@ export class PartnerDashboardService {
         $or: [
           { partner: partner._id },
           { partner: String(partner._id) },
-          { partner: null, status: { $in: ['Pending', 'pending'] } },
+          { partner: null, status: 'Pending', paymentStatus: 'paid', cancelledByPartners: { $ne: partner._id } },
         ],
       })
       .populate('category', 'name slug image')
@@ -303,15 +252,21 @@ export class PartnerDashboardService {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Booking not found or no longer available');
     }
 
-    // Fetch customer's last 3 service history items
-    const customerHistory = await bookingRepository.model
+    const bookingObj = booking.toObject();
+
+    // Open (unclaimed) offers: no customer contact details until the partner accepts the job
+    if (!booking.partner || String(booking.partner._id || booking.partner) !== String(partner._id)) {
+      bookingObj.customer = { _id: booking.customer?._id, name: booking.customer?.name };
+      bookingObj.customerHistory = [];
+      return bookingObj;
+    }
+
+    // Assigned partner: customer last 3 service history items
+    bookingObj.customerHistory = await bookingRepository.model
       .find({ customer: booking.customer._id })
       .sort({ createdAt: -1 })
       .limit(3)
-      .select('bookingNumber packageName serviceName totalAmount amount status createdAt');
-
-    const bookingObj = booking.toObject();
-    bookingObj.customerHistory = customerHistory;
+      .select('bookingId packageName amount status createdAt');
 
     return bookingObj;
   }
@@ -319,48 +274,15 @@ export class PartnerDashboardService {
   // 3. WALLET & EARNINGS
   async getWallet(partner) {
     const p = await userRepository.findById(partner._id);
-
-    // Auto-delete legacy seeded dummy transactions from MongoDB for this partner
-    await WalletTransaction.deleteMany({
-      partnerId: partner._id,
-      transactionId: { $regex: /^TXN-.*-(9081|9080|9079|9078)/ }
-    });
-
-    const transactions = await WalletTransaction.find({ partnerId: partner._id }).sort({ createdAt: -1 });
-
-    const completedBookings = await bookingRepository.model.find({
-      $or: [{ partner: partner._id }, { partner: String(partner._id) }],
-      status: { $in: ['Completed', 'completed'] },
-    });
-
-    const realLifetimeEarned = completedBookings.reduce(
-      (sum, b) => {
-        const snapshot = b.financialSnapshot || {};
-        const net = snapshot.partnerNetEarning ?? (b.amount ? (b.amount - Math.round(b.amount * 0.10)) : 359);
-        return sum + net;
-      },
-      0
-    );
-
-    // Auto-clean legacy unverified balance or 0 balance when completed jobs exist
-    if (p && (p.walletBalance === 0 || !p.walletBalance || p.walletBalance === 13209 || p.walletBalance === 12450) && realLifetimeEarned > 0) {
-      p.walletBalance = realLifetimeEarned;
-      p.availableBalance = realLifetimeEarned;
-      p.withdrawableBalance = realLifetimeEarned;
-      p.lifetimeEarnings = realLifetimeEarned;
-      await p.save().catch(() => {});
-    }
-
-    const currentBal = (p?.walletBalance && p.walletBalance > 0 && p.walletBalance !== 13209 && p.walletBalance !== 12450)
-      ? p.walletBalance
-      : realLifetimeEarned;
+    const transactions = await WalletTransaction.find({ partnerId: partner._id }).sort({ createdAt: -1 }).limit(200);
 
     return {
       partnerId: partner._id,
-      walletBalance: currentBal,
+      walletBalance: p?.walletBalance ?? 0,
       securityDeposit: p?.securityDeposit ?? 0,
-      pendingClearance: p?.pendingBalance ?? 0,
-      totalEarned: p?.lifetimeEarnings || realLifetimeEarned,
+      pendingClearance: p?.withdrawalPending ?? 0,
+      withdrawalPending: p?.withdrawalPending ?? 0,
+      totalEarned: p?.lifetimeEarnings ?? 0,
       bankDetails: p?.bankDetails || {},
       transactions,
     };
@@ -369,166 +291,127 @@ export class PartnerDashboardService {
   async getEarnings(partner) {
     const p = await userRepository.findById(partner._id);
 
-    // Query real completed bookings from MongoDB
     const completedBookings = await bookingRepository.model
-      .find({
-        $or: [{ partner: partner._id }, { partner: String(partner._id) }],
-        status: { $in: ['Completed', 'completed'] },
-      })
-      .populate('customer', 'name email phone')
-      .sort({ updatedAt: -1 });
+      .find({ partner: partner._id, status: 'Completed' })
+      .populate('customer', 'name')
+      .sort({ completedAt: -1 });
 
-    const realTotalJobs = completedBookings.length;
-    const realTotalEarned = completedBookings.reduce(
-      (sum, b) => sum + (b.totalAmount || b.amount || b.finalPrice || 0),
-      0
-    );
+    const dateOf = (b) => new Date(b.completedAt || b.updatedAt || b.createdAt);
+    const net = netOf;
+    const sum = (list) => list.reduce((t, b) => t + net(b), 0);
 
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const todaysCompleted = completedBookings.filter(
-      (b) => new Date(b.updatedAt || b.createdAt) >= startOfToday
-    );
+    const startOfYesterday = new Date(startOfToday.getTime() - 86400000);
+    const startOfWeek = new Date(startOfToday.getTime() - ((startOfToday.getDay() + 6) % 7) * 86400000); // Monday
+    const startOfLastWeek = new Date(startOfWeek.getTime() - 7 * 86400000);
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
 
-    const totalEarnedToday = todaysCompleted.reduce(
-      (sum, b) => sum + (b.totalAmount || b.amount || b.finalPrice || 0),
-      0
-    );
+    const inRange = (b, from, to) => {
+      const d = dateOf(b);
+      return d >= from && (!to || d < to);
+    };
+    const pct = (cur, prev) => (prev > 0 ? `${cur >= prev ? '+' : ''}${Math.round(((cur - prev) / prev) * 100)}%` : cur > 0 ? '+100%' : '0%');
 
-    const todayFormattedJobs = todaysCompleted.map((b) => ({
-      id: b.bookingNumber || `JOB-${b._id.toString().slice(-4)}`,
-      serviceName: b.serviceName || b.packageName || 'Service Job',
+    const today = completedBookings.filter((b) => inRange(b, startOfToday));
+    const yesterday = completedBookings.filter((b) => inRange(b, startOfYesterday, startOfToday));
+    const week = completedBookings.filter((b) => inRange(b, startOfWeek));
+    const lastWeek = completedBookings.filter((b) => inRange(b, startOfLastWeek, startOfWeek));
+    const month = completedBookings.filter((b) => inRange(b, startOfMonth));
+    const lastMonth = completedBookings.filter((b) => inRange(b, startOfLastMonth, startOfMonth));
+
+    const totalEarned = sum(completedBookings);
+    const totalJobs = completedBookings.length;
+
+    // Monthly trend: last 7 calendar months
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const trend = [];
+    for (let i = 6; i >= 0; i--) {
+      const from = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const to = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+      trend.push({ month: monthNames[from.getMonth()], val: sum(completedBookings.filter((b) => inRange(b, from, to))) });
+    }
+    const maxTrend = Math.max(...trend.map((t) => t.val), 0);
+    const monthlyTrend = trend.map((t) => ({ ...t, height: maxTrend > 0 ? `${Math.round((t.val / maxTrend) * 100)}%` : '0%' }));
+
+    // Hourly activity today
+    const hourSlots = [[9, '9 AM'], [11, '11 AM'], [13, '1 PM'], [15, '3 PM'], [17, '5 PM'], [19, '7 PM']];
+    const hourlyActivity = hourSlots.map(([h, label], i) => {
+      const next = hourSlots[i + 1] ? hourSlots[i + 1][0] : 24;
+      const lower = i === 0 ? 0 : h;
+      return { hour: label, val: sum(today.filter((b) => dateOf(b).getHours() >= lower && dateOf(b).getHours() < next)) };
+    });
+
+    // Day-of-week breakdown this week (Mon..Sun)
+    const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const dailyBreakdown = dayLabels.map((day, i) => {
+      const from = new Date(startOfWeek.getTime() + i * 86400000);
+      const to = new Date(from.getTime() + 86400000);
+      return { day, val: sum(week.filter((b) => inRange(b, from, to))) };
+    });
+    const busiest = [...dailyBreakdown].sort((a, b) => b.val - a.val)[0];
+
+    // Week-of-month breakdown
+    const weeklyBreakdown = [1, 2, 3, 4].map((w) => {
+      const from = new Date(now.getFullYear(), now.getMonth(), (w - 1) * 7 + 1);
+      const to = w === 4 ? new Date(now.getFullYear(), now.getMonth() + 1, 1) : new Date(now.getFullYear(), now.getMonth(), w * 7 + 1);
+      return { week: `W${w}`, val: sum(month.filter((b) => inRange(b, from, to))) };
+    });
+
+    const todayFormattedJobs = today.map((b) => ({
+      id: b.bookingId || `JOB-${b._id.toString().slice(-4)}`,
+      serviceName: b.packageName || 'Service Job',
       customerName: b.customer?.name || 'Customer',
-      time: new Date(b.updatedAt || b.createdAt).toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-      }),
-      amount: b.totalAmount || b.amount || b.finalPrice || 0,
+      time: dateOf(b).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      amount: net(b),
     }));
 
+    const monthEarned = sum(month);
     return {
       partnerId: partner._id,
       overview: {
-        totalEarned: realTotalEarned,
-        totalJobs: realTotalJobs,
-        avgPerJob: realTotalJobs > 0 ? Math.round(realTotalEarned / realTotalJobs) : 0,
-        monthlyTrend: [
-          { month: 'Jan', val: 0, height: '0%' },
-          { month: 'Feb', val: 0, height: '0%' },
-          { month: 'Mar', val: 0, height: '0%' },
-          { month: 'Apr', val: 0, height: '0%' },
-          { month: 'May', val: 0, height: '0%' },
-          { month: 'Jun', val: 0, height: '0%' },
-          { month: 'Jul', val: realTotalEarned, height: realTotalEarned > 0 ? '100%' : '0%' },
-        ],
+        totalEarned,
+        totalJobs,
+        avgPerJob: totalJobs > 0 ? Math.round(totalEarned / totalJobs) : 0,
+        monthlyTrend,
       },
       daily: {
         dateLabel: 'Today',
-        totalEarnedToday,
-        percentageChange: '0%',
-        hourlyActivity: [
-          { hour: '9 AM', val: 0 },
-          { hour: '11 AM', val: 0 },
-          { hour: '1 PM', val: 0 },
-          { hour: '3 PM', val: 0 },
-          { hour: '5 PM', val: 0 },
-          { hour: '7 PM', val: 0 },
-        ],
+        totalEarnedToday: sum(today),
+        percentageChange: pct(sum(today), sum(yesterday)),
+        hourlyActivity,
         completedJobs: todayFormattedJobs,
       },
       weekly: {
         weekLabel: 'Current Week',
-        totalEarnedWeek: realTotalEarned,
-        percentageChange: '0%',
-        dailyBreakdown: [
-          { day: 'Mon', val: 0 },
-          { day: 'Tue', val: 0 },
-          { day: 'Wed', val: 0 },
-          { day: 'Thu', val: 0 },
-          { day: 'Fri', val: 0 },
-          { day: 'Sat', val: 0 },
-          { day: 'Sun', val: 0 },
-        ],
-        busiestDay: realTotalJobs > 0 ? 'Active' : 'None',
-        busiestDayDetails: realTotalJobs > 0 ? `You completed ${realTotalJobs} service jobs` : 'No completed jobs this week yet',
+        totalEarnedWeek: sum(week),
+        percentageChange: pct(sum(week), sum(lastWeek)),
+        dailyBreakdown,
+        busiestDay: busiest && busiest.val > 0 ? busiest.day : 'None',
+        busiestDayDetails: week.length > 0 ? `You completed ${week.length} service job(s) this week` : 'No completed jobs this week yet',
       },
       monthly: {
         monthLabel: 'Current Month',
-        totalEarnedMonth: realTotalEarned,
-        percentageChange: '0%',
-        weeklyBreakdown: [
-          { week: 'W1', val: 0 },
-          { week: 'W2', val: 0 },
-          { week: 'W3', val: 0 },
-          { week: 'W4', val: realTotalEarned },
-        ],
-        avgWeeklyEarned: Math.round(realTotalEarned / 4),
-        activeDays: realTotalJobs,
+        totalEarnedMonth: monthEarned,
+        percentageChange: pct(monthEarned, sum(lastMonth)),
+        weeklyBreakdown,
+        avgWeeklyEarned: Math.round(monthEarned / 4),
+        activeDays: new Set(month.map((b) => dateOf(b).toDateString())).size,
         payoutDestination: `${p?.bankDetails?.bankName || 'Bank Account'} ${p?.bankDetails?.accountNumber ? `•••• ${p.bankDetails.accountNumber.slice(-4)}` : ''}`,
       },
     };
   }
 
   async requestWithdrawal(partnerId, amount) {
-    const user = await userRepository.findById(partnerId);
-    if (!user) throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner user not found');
-    const numAmount = Number(amount);
-    if (isNaN(numAmount) || numAmount <= 0) {
-      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Please enter a valid withdrawal amount');
-    }
-    const currentBalance = user.walletBalance || 0;
-    if (numAmount > currentBalance) {
-      throw new ApiError(HTTP_STATUS.BAD_REQUEST, `Insufficient wallet balance. Available: ₹${currentBalance.toLocaleString('en-IN')}`);
-    }
-
-    user.walletBalance = currentBalance - numAmount;
-    await user.save();
-
-    const txnId = `TXN-${Math.floor(100000 + Math.random() * 900000)}`;
-    const txn = await WalletTransaction.create({
-      transactionId: txnId,
-      partnerId: user._id,
-      type: 'Debit',
-      category: 'Bank Withdrawal',
-      title: `Instant Bank Payout to ${user.bankDetails?.bankName || 'HDFC Bank'}`,
-      amount: numAmount,
-      status: 'Completed',
-    });
-
-    return {
-      message: `₹${numAmount.toLocaleString('en-IN')} transferred successfully to your bank account!`,
-      walletBalance: user.walletBalance,
-      transaction: txn,
-    };
+    return financialEngineService.processPartnerWithdrawal(partnerId, amount);
   }
 
-  async addDepositToWallet(partnerId, amount) {
-    const user = await userRepository.findById(partnerId);
-    if (!user) throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner user not found');
-    const numAmount = Number(amount);
-    if (isNaN(numAmount) || numAmount <= 0) {
-      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Please enter a valid deposit amount');
-    }
-
-    user.walletBalance = (user.walletBalance || 0) + numAmount;
-    await user.save();
-
-    const txnId = `TXN-${Math.floor(100000 + Math.random() * 900000)}`;
-    const txn = await WalletTransaction.create({
-      transactionId: txnId,
-      partnerId: user._id,
-      type: 'Credit',
-      category: 'Added to Wallet',
-      title: 'Partner Wallet Deposit / Top-up',
-      amount: numAmount,
-      status: 'Completed',
-    });
-
-    return {
-      message: `₹${numAmount.toLocaleString('en-IN')} successfully added to your wallet!`,
-      walletBalance: user.walletBalance,
-      transaction: txn,
-    };
+  async addDepositToWallet() {
+    throw new ApiError(
+      HTTP_STATUS.BAD_REQUEST,
+      'Wallet top-up must be completed through the payment gateway. Please use the "Add Money" payment option.'
+    );
   }
 
   // 4. RATING & REVIEWS
@@ -586,20 +469,65 @@ export class PartnerDashboardService {
   }
 
   async updateProfile(partnerId, updateData = {}) {
-    const cleanData = { ...updateData };
-    delete cleanData.email;
-    delete cleanData.phone;
+    // Mass-assignment guard: only these profile fields may ever be changed by the partner themselves.
+    // (role, status, kycStatus, wallet/ledger balances, ratings, approval flags ... are NEVER client-writable)
+    const ALLOWED = [
+      'name', 'agencyName', 'profileImage', 'address', 'city', 'state', 'dob', 'gender', 'experience',
+      'certifications', 'workRadius', 'localities', 'locationCoordinates', 'preferredLanguage',
+      'category', 'categories', 'offeredServices', 'isLocationSaved', 'isCategorySelected', 'isSkillsUpdated', 'isServiceAreaSet',
+    ];
+    const cleanData = {};
+    for (const key of ALLOWED) {
+      if (updateData[key] !== undefined) cleanData[key] = updateData[key];
+    }
+    if (cleanData.workRadius !== undefined) {
+      const wr = Number(cleanData.workRadius);
+      if (!Number.isFinite(wr) || wr < 1 || wr > 100) {
+        throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Work radius must be between 1 and 100 km');
+      }
+      cleanData.workRadius = wr;
+    }
 
-    // Upload base64 profile image to Cloudflare R2 storage and save public URL in DB
-    if (cleanData.profileImage && typeof cleanData.profileImage === 'string' && cleanData.profileImage.startsWith('data:image')) {
-      try {
-        cleanData.profileImage = await r2StorageService.uploadBase64Image(cleanData.profileImage, 'norozz_partner_profiles');
-      } catch (err) {
-        console.warn('R2 Storage upload notice:', err);
+    // Bank details: the partner can never mark their own bank account as verified
+    if (updateData.bankDetails && typeof updateData.bankDetails === 'object') {
+      const b = updateData.bankDetails;
+      for (const k of ['accountHolderName', 'bankName', 'accountNumber', 'ifscCode', 'upiId']) {
+        if (b[k] !== undefined) cleanData[`bankDetails.${k}`] = String(b[k]).trim().slice(0, 100);
+      }
+      cleanData['bankDetails.isVerified'] = false;
+    }
+
+    // Documents: only document file fields; review statuses stay admin-controlled. A re-upload goes back to 'pending'.
+    if (updateData.documents && typeof updateData.documents === 'object') {
+      const DOC_KEYS = ['aadhaarDoc', 'aadhaarFront', 'aadhaarBack', 'panDoc', 'drivingLicenseDoc', 'passportPhoto', 'bankPassbookDoc', 'gstDoc'];
+      const STATUS_KEYS = ['aadhaarFront', 'aadhaarBack', 'panDoc', 'drivingLicenseDoc', 'bankPassbookDoc', 'passportPhoto'];
+      for (const k of DOC_KEYS) {
+        let v = updateData.documents[k];
+        if (typeof v !== 'string' || !v) continue;
+        if (v.startsWith('data:image') || v.startsWith('data:application/pdf')) {
+          const uploaded = await r2StorageService.uploadBase64Image(v, 'norozz_partner_documents');
+          // the storage helper returns the original base64 string when the upload failed
+          if (!uploaded || String(uploaded).startsWith('data:')) {
+            throw new ApiError(HTTP_STATUS.BAD_REQUEST, `Could not upload ${k}. Please try again.`);
+          }
+          v = uploaded;
+        }
+        cleanData[`documents.${k}`] = v;
+        if (STATUS_KEYS.includes(k)) cleanData[`documents.statuses.${k}`] = 'pending';
       }
     }
 
-    const updated = await userRepository.updateById(partnerId, cleanData);
+    // Upload a base64 profile image to storage and save the public URL. Never persist raw base64 in the DB.
+    if (typeof cleanData.profileImage === 'string' && cleanData.profileImage.startsWith('data:image')) {
+      const uploaded = await r2StorageService.uploadBase64Image(cleanData.profileImage, 'norozz_partner_profiles');
+      if (!uploaded || String(uploaded).startsWith('data:')) {
+        throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Could not upload profile image. Please try again.');
+      }
+      cleanData.profileImage = uploaded;
+    }
+
+    const updated = await userRepository.updateById(partnerId, { $set: cleanData });
+    if (!updated) throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner profile not found');
     const obj = updated.toObject();
     delete obj.password;
     return obj;
@@ -988,55 +916,60 @@ export class PartnerDashboardService {
   // 13. PARTNER CANCEL ACCEPTED BOOKING & AUTO RE-DISPATCH VIA SOCKET.IO
   async cancelAcceptedBooking(partner, bookingId, { reason, note } = {}) {
     this.checkKycApproved(partner);
+    if (!bookingId || !mongoose.Types.ObjectId.isValid(bookingId)) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Booking request not found');
+    }
 
     const booking = await bookingRepository.model.findById(bookingId);
     if (!booking) {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Booking request not found');
     }
-
-    // Verify booking is assigned to this partner or claimed by this partner
-    const isAssigned = String(booking.partner) === String(partner._id);
-    if (!isAssigned) {
-      throw new ApiError(
-        HTTP_STATUS.FORBIDDEN,
-        'You cannot cancel a booking that is not assigned to you.'
-      );
+    if (String(booking.partner) !== String(partner._id)) {
+      throw new ApiError(HTTP_STATUS.FORBIDDEN, 'You cannot cancel a booking that is not assigned to you.');
+    }
+    if (booking.status === 'Started' || booking.otpVerified) {
+      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'The service has already started. It can no longer be cancelled.');
+    }
+    if (!['Assigned', 'Accepted', 'On The Way'].includes(booking.status)) {
+      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'This booking has already been completed or cancelled.');
     }
 
-    // Prevent cancellation if booking is already completed, cancelled, or refunded
-    if (['Completed', 'completed', 'Cancelled', 'cancelled', 'Refunded', 'refunded'].includes(booking.status)) {
-      throw new ApiError(
-        HTTP_STATUS.BAD_REQUEST,
-        'This booking has already been completed or cancelled.'
-      );
+    const cleanReason = String(reason || '').slice(0, 200);
+    const cleanNote = String(note || '').slice(0, 300);
+    const cancelReasonStr = cleanReason ? `${cleanReason}${cleanNote ? ` - ${cleanNote}` : ''}` : (cleanNote || 'Partner cancelled accepted booking request');
+
+    // Atomically release the job back to the open pool (with a fresh OTP for the next partner)
+    const reopened = await bookingRepository.model.findOneAndUpdate(
+      { _id: bookingId, partner: partner._id, status: { $in: ['Assigned', 'Accepted', 'On The Way'] }, otpVerified: { $ne: true } },
+      {
+        $set: {
+          partner: null,
+          status: 'Pending',
+          assignedAt: null,
+          autoAssignAttemptedAt: null,
+          otpVerified: false,
+          otpFailedAttempts: 0,
+          startedAt: null,
+          completionOtp: String(crypto.randomInt(1000, 10000)),
+          cancellationReason: cancelReasonStr,
+          cancelledBy: 'partner',
+        },
+        $addToSet: { cancelledByPartners: partner._id },
+        $inc: { reassignCount: 1 },
+      },
+      { new: true }
+    );
+    if (!reopened) {
+      throw new ApiError(HTTP_STATUS.CONFLICT, 'Booking state changed. Please refresh.');
     }
 
-    const cancelReasonStr = reason ? `${reason}${note ? ` - ${note}` : ''}` : (note || 'Partner cancelled accepted booking request');
-
-    // Add partner ID to cancelledByPartners to prevent re-dispatching to this partner
-    booking.cancelledByPartners = booking.cancelledByPartners || [];
-    if (!booking.cancelledByPartners.some((id) => String(id) === String(partner._id))) {
-      booking.cancelledByPartners.push(partner._id);
-    }
-
-    // Reset booking state so it becomes an open pending offer again
-    booking.partner = null;
-    booking.status = 'Pending';
-    booking.otpVerified = false;
-    booking.startedAt = null;
-    booking.cancellationReason = cancelReasonStr;
-    booking.cancelledBy = 'partner';
-    await booking.save();
-
-    // Check Daily Cancellation Limit & Apply Penalty / Suspension
-    const { SystemSettings } = await import('../models/systemSettings.model.js');
+    // Daily cancellation limit & penalty
     const settings = await SystemSettings.findOne({ key: 'global_settings' });
     const maxDailyAllowed = settings?.maxDailyFreeCancellations ?? 3;
     const penaltyAmount = settings?.partnerCancellationPenaltyAmount ?? 100;
 
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
-
     const todayCancellationsCount = await bookingRepository.model.countDocuments({
       cancelledByPartners: partner._id,
       updatedAt: { $gte: startOfToday },
@@ -1045,37 +978,51 @@ export class PartnerDashboardService {
     let isPenaltyApplied = false;
     let isSuspended = false;
 
-    // 1. Penalty fee is charged on EVERY cancellation
-    const pUser = await userRepository.findById(partner._id);
-    if (pUser) {
-      pUser.walletBalance = (pUser.walletBalance || 0) - penaltyAmount;
-      isPenaltyApplied = true;
-
-      // 2. Account is disabled/suspended if cancellations today exceed maxDailyAllowed (e.g. > 3)
-      if (todayCancellationsCount > maxDailyAllowed) {
-        pUser.status = 'suspended';
-        pUser.isOnline = false;
-        isSuspended = true;
-      }
-
-      await pUser.save();
-
-      // 3. Record Wallet Debit Transaction Log
-      try {
-        const { WalletTransaction } = await import('../models/walletTransaction.model.js');
-        const txnId = `PEN-${Math.floor(100000 + Math.random() * 900000)}`;
+    if (penaltyAmount > 0) {
+      const out = await financialEngineService.applyOnce(
+        {
+          orderId: reopened._id,
+          userId: partner._id,
+          accountType: 'PARTNER_WALLET',
+          type: 'CANCELLATION_CHARGE',
+          direction: 'DEBIT',
+          amount: penaltyAmount,
+          referenceType: 'Booking',
+          referenceId: reopened.bookingId,
+          idempotencyKey: `PENALTY-${reopened.bookingId}-${partner._id}-${reopened.reassignCount}`,
+          metadata: { reason: cancelReasonStr },
+        },
+        async () => {
+          const u = await User.findByIdAndUpdate(
+            partner._id,
+            { $inc: { walletBalance: -penaltyAmount, availableBalance: -penaltyAmount, withdrawableBalance: -penaltyAmount } },
+            { new: true }
+          );
+          await PlatformAccount.findOneAndUpdate(
+            { accountName: 'Norozz Main Revenue Account' },
+            { $inc: { grossRevenue: penaltyAmount, netPlatformRevenue: penaltyAmount } },
+            { upsert: true }
+          );
+          return { balanceBefore: (u?.walletBalance || 0) + penaltyAmount, balanceAfter: u?.walletBalance || 0 };
+        }
+      );
+      if (out.applied) {
+        isPenaltyApplied = true;
         await WalletTransaction.create({
-          transactionId: txnId,
-          partnerId: pUser._id,
+          transactionId: `PEN-${Date.now()}-${crypto.randomInt(1000, 10000)}`,
+          partnerId: partner._id,
           type: 'Debit',
           category: 'Cancellation Penalty',
           title: `Cancellation Penalty Fee (#${todayCancellationsCount} cancellation today)`,
           amount: penaltyAmount,
           status: 'Completed',
-        });
-      } catch (txnErr) {
-        console.error('Error logging cancellation penalty transaction:', txnErr);
+        }).catch((e) => console.error('Penalty txn log error:', e.message));
       }
+    }
+
+    if (todayCancellationsCount > maxDailyAllowed) {
+      await User.updateOne({ _id: partner._id }, { $set: { status: 'suspended', isOnline: false } });
+      isSuspended = true;
     }
 
     let responseMsg = `Booking cancelled. ₹${penaltyAmount} penalty fee deducted from your wallet.`;
@@ -1083,41 +1030,25 @@ export class PartnerDashboardService {
       responseMsg = `⚠️ Daily cancellation limit exceeded (${todayCancellationsCount} cancellations today)! ₹${penaltyAmount} penalty fee debited, and your account has been temporarily suspended. Please contact Admin.`;
     }
 
-    // Populate booking details for real-time Socket.IO dispatch
+    // Re-dispatch to other eligible partners & tell the customer
     const populatedBooking = await bookingRepository.model
-      .findById(booking._id)
+      .findById(reopened._id)
       .populate('category', 'name slug image')
       .populate('service', 'name slug price finalPrice duration')
       .populate('customer', 'name email phone');
 
-    // Trigger Real-Time Socket.io Dispatch to all other eligible online partners
-    try {
-      dispatchNewJobOffer(populatedBooking).catch((err) => {
-        console.error('Socket re-dispatch error on partner cancellation:', err);
-      });
-    } catch (e) {
-      console.warn('Could not execute Socket re-dispatch:', e);
-    }
-
-    // Notify customer socket channel if connected
-    try {
-      const io = (await import('../sockets/index.js')).getIO();
-      if (io && populatedBooking.customer) {
-        const custIdStr = String(populatedBooking.customer._id || populatedBooking.customer);
-        io.to(`customer_${custIdStr}`).to(`user_${custIdStr}`).emit('partner_unassigned', {
-          bookingId: booking._id,
-          bookingNumber: booking.bookingId,
-          message: 'Assigned technician had an emergency. Searching for another verified technician in your area...',
-          status: 'Pending',
-        });
-      }
-    } catch (e) {
-      console.warn('Customer socket notification notice:', e);
-    }
+    dispatchNewJobOffer(populatedBooking).catch((err) => console.error('Socket re-dispatch error on partner cancellation:', err));
+    emitToUser(populatedBooking.customer?._id, 'partner_unassigned', {
+      bookingId: reopened._id,
+      bookingNumber: reopened.bookingId,
+      message: 'Assigned technician had an emergency. Searching for another verified technician in your area...',
+      status: 'Pending',
+    });
+    notifyBookingUpdate(reopened);
 
     return {
       message: responseMsg,
-      bookingId: booking._id,
+      bookingId: reopened._id,
       status: 'Pending',
       todayCancellationsCount,
       maxDailyFree: maxDailyAllowed,
@@ -1165,27 +1096,16 @@ export class PartnerDashboardService {
       updatedAt: { $gte: prevStartDate, $lte: prevEndDate },
     });
 
-    // Also fetch ALL completed bookings if active period has 0
-    const allCompletedBookings = await bookingRepository.model.find({
-      $or: [{ partner: partnerId }, { partner: String(partnerId) }],
-      status: { $in: ['Completed', 'completed'] },
-    }).populate('service category');
 
     // Real Jobs Count
-    const jobsCompleted = activeBookings.length > 0 ? activeBookings.length : allCompletedBookings.length;
+    const jobsCompleted = activeBookings.length;
     const prevJobsCompleted = prevBookings.length;
 
     // Real Revenue
-    const totalRevenue = activeBookings.reduce((sum, b) => {
-      const net = b.financialSnapshot?.partnerNetEarning ?? (b.amount ? Math.round(b.amount * 0.90) : 359);
-      return sum + net;
-    }, 0) || allCompletedBookings.reduce((sum, b) => {
-      const net = b.financialSnapshot?.partnerNetEarning ?? (b.amount ? Math.round(b.amount * 0.90) : 359);
-      return sum + net;
-    }, 0);
+    const totalRevenue = activeBookings.reduce((sum, b) => sum + netOf(b), 0);
 
     const prevRevenue = prevBookings.reduce((sum, b) => {
-      const net = b.financialSnapshot?.partnerNetEarning ?? (b.amount ? Math.round(b.amount * 0.90) : 359);
+      const net = netOf(b);
       return sum + net;
     }, 0);
 
@@ -1208,11 +1128,11 @@ export class PartnerDashboardService {
 
     // Category Performance Breakdown
     const catMap = {};
-    const bookingsToGroup = activeBookings.length > 0 ? activeBookings : allCompletedBookings;
+    const bookingsToGroup = activeBookings;
 
     bookingsToGroup.forEach((b) => {
       const catName = b.service?.name || b.category?.name || b.serviceName || b.categoryName || 'General Service';
-      const net = b.financialSnapshot?.partnerNetEarning ?? (b.amount ? Math.round(b.amount * 0.90) : 359);
+      const net = netOf(b);
       if (!catMap[catName]) {
         catMap[catName] = { name: catName, jobs: 0, revenue: 0 };
       }
@@ -1229,10 +1149,10 @@ export class PartnerDashboardService {
       totalRevenue,
       prevRevenue,
       revenueGrowthText,
-      avgRating: p?.rating || 5.0,
+      avgRating: p?.totalRatings > 0 ? p.averageRating : 0,
       ratingText: 'Stable',
-      onTimeArrivalRate: '100%',
-      onTimeArrivalText: '0% vs last month',
+      onTimeArrivalRate: 'N/A',
+      onTimeArrivalText: 'Not tracked yet',
       categoryPerformance,
     };
   }

@@ -8,8 +8,8 @@ export const createBookingRules = [
   body('city').optional().trim(),
   body('pincode').optional().trim(),
   body('bookingDate').optional().isISO8601().withMessage('Valid booking date is required'),
-  body('timeSlot').trim().notEmpty().withMessage('Time slot is required'),
-  body('amount').isNumeric().withMessage('Amount must be a positive number'),
+  body('timeSlot').trim().notEmpty().withMessage('Time slot is required').isLength({ max: 100 }),
+  body('amount').optional().isNumeric(),
   body('paymentMethod').optional().trim(),
 ];
 

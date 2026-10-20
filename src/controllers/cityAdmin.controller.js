@@ -111,14 +111,14 @@ export class CityAdminController extends BaseController {
   assignBooking = asyncHandler(async (req, res) => {
     const assignedCity = await this._resolveCity(req.user);
     const { partnerId } = req.body;
-    const result = await cityAdminService.assignBooking(req.params.id, partnerId, assignedCity);
+    const result = await cityAdminService.assignBooking(req.params.id, partnerId, assignedCity, req.user);
     return this.sendSuccess(res, result, result.message);
   });
 
   cancelBooking = asyncHandler(async (req, res) => {
     const assignedCity = await this._resolveCity(req.user);
     const { reason } = req.body;
-    const result = await cityAdminService.cancelBooking(req.params.id, reason, assignedCity);
+    const result = await cityAdminService.cancelBooking(req.params.id, reason, assignedCity, req.user);
     return this.sendSuccess(res, result, result.message);
   });
 

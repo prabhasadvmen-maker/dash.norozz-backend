@@ -11,6 +11,10 @@ const addressSchema = new mongoose.Schema(
     state: { type: String, default: '', trim: true },
     pincode: { type: String, default: '', trim: true },
     isDefault: { type: Boolean, default: false },
+    locationCoordinates: {
+      lat: { type: Number, default: null },
+      lng: { type: Number, default: null },
+    },
   },
   { _id: true, timestamps: true }
 );
@@ -87,7 +91,7 @@ const userSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['active', 'blocked', 'deleted'],
+      enum: ['active', 'blocked', 'deleted', 'suspended'],
       default: 'active',
     },
     isEmailVerified: {

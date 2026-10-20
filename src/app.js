@@ -26,17 +26,20 @@ const allowedOrigins = [
   'https://norozz.in',
   'https://www.norozz.in',
   'https://api.norozz.in',
-  process.env.CORS_ORIGIN,
+  ...(process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim()) : []),
 ].filter(Boolean);
+
+const isProduction = process.env.NODE_ENV === 'production';
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (mobile apps, Postman, curl) or allowed origins
-      if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      // No Origin header (mobile apps, Postman, curl, server-to-server) is allowed.
+      // Browsers: any origin in development, only the allow-list in production.
+      if (!origin || !isProduction || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
-        callback(null, true);
+        callback(new ApiError(HTTP_STATUS.FORBIDDEN, `Origin ${origin} is not allowed by CORS`));
       }
     },
     credentials: true,
@@ -45,9 +48,6 @@ app.use(
     maxAge: 86400, // Cache preflight OPTIONS responses for 24 hours
   })
 );
-
-// Enable Pre-Flight CORS response for all routes
-app.options('*', cors());
 
 // Security Middlewares & Rate Limiting (Allow cross-origin resource policy for media/images)
 app.use(
@@ -70,8 +70,10 @@ app.use(sanitizeInput);
 app.use(cookieParser());
 app.use(express.static('public'));
 
-// Swagger API Documentation Endpoint
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+// Swagger API Documentation Endpoint (hidden in production unless explicitly enabled)
+if (!isProduction || process.env.ENABLE_SWAGGER === 'true') {
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+}
 
 // API v1 Master Router
 app.use('/api', v1Routes);

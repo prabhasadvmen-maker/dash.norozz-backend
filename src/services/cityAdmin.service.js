@@ -99,15 +99,27 @@ export class CityAdminService {
   async getDashboardStats(assignedCity) {
     const cityBookings = await this.getCityBookings(assignedCity);
     const cityPartners = await this.getCityPartners(assignedCity);
-    const cityCustomersCount = await userRepository.count({ role: ROLES.CUSTOMER });
+    const cityCustomersCount = await userRepository.count({
+      role: ROLES.CUSTOMER,
+      city: new RegExp(`^${String(assignedCity).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+    });
+
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
 
     const totalOrders = cityBookings.length;
-    const pendingOrders = cityBookings.filter((b) => ['pending', 'Pending', 'assigned', 'Assigned'].includes(b.status)).length;
-    const completedOrders = cityBookings.filter((b) => ['completed', 'Completed', 'confirmed', 'Confirmed'].includes(b.status)).length;
+    const todaysOrders = cityBookings.filter((b) => new Date(b.createdAt) >= startOfToday).length;
+    const pendingOrders = cityBookings.filter((b) => ['Pending', 'Assigned', 'Accepted', 'On The Way', 'Started'].includes(b.status)).length;
+    const completedList = cityBookings.filter((b) => b.status === 'Completed');
+    const completedOrders = completedList.length;
 
+    // Revenue only counts services that were actually delivered and paid for
     let cityRevenue = 0;
-    cityBookings.forEach((b) => {
-      cityRevenue += Number(b.amount || b.totalAmount || b.financialSnapshot?.customerPayable || 0);
+    let cityCommissionTotal = 0;
+    completedList.forEach((b) => {
+      const snap = b.financialSnapshot || {};
+      cityRevenue += Number(snap.customerPayable ?? b.prepaidAmount ?? b.amount ?? 0);
+      cityCommissionTotal += Number(snap.norozzGrossRevenue ?? 0);
     });
 
     const activePartners = cityPartners.filter((p) => (p.kycStatus || '').toLowerCase() === 'approved').length;
@@ -119,9 +131,9 @@ export class CityAdminService {
       pendingBookings: pendingOrders,
       completedBookings: completedOrders,
       cityRevenueGmv: cityRevenue,
-      cityCommission: Math.round(cityRevenue * 0.20),
+      cityCommission: Math.round(cityCommissionTotal),
       metrics: {
-        todaysOrders: totalOrders,
+        todaysOrders,
         pendingOrders: pendingOrders,
         completedOrders: completedOrders,
         cityRevenue: cityRevenue,
@@ -371,7 +383,7 @@ export class CityAdminService {
     });
   }
 
-  async assignBooking(bookingId, partnerId, assignedCity) {
+  async assignBooking(bookingId, partnerId, assignedCity, actor) {
     const booking = await bookingRepository.findById(bookingId);
     if (!booking || !this.matchesCity(booking, assignedCity)) {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Booking not found in your assigned city jurisdiction');
@@ -382,35 +394,45 @@ export class CityAdminService {
       throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Selected partner does not belong to your assigned city');
     }
 
-    booking.partner = partner._id;
-    booking.status = 'Assigned';
-    await booking.save();
-
-    return { message: `Booking '${booking.bookingId}' assigned to partner '${partner.name}'`, booking };
+    const { bookingService } = await import('./booking.service.js');
+    const result = await bookingService.assignPartner(bookingId, partnerId, actor);
+    return { message: `Booking '${booking.bookingId}' assigned to partner '${partner.name}'`, booking: result.booking };
   }
 
-  async cancelBooking(bookingId, reason, assignedCity) {
+  async cancelBooking(bookingId, reason, assignedCity, actor) {
     const booking = await bookingRepository.findById(bookingId);
     if (!booking || !this.matchesCity(booking, assignedCity)) {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Booking not found in your assigned city jurisdiction');
     }
 
-    booking.status = 'Cancelled';
-    booking.cancellationReason = reason || 'Admin Cancellation';
-    booking.cancelledBy = 'admin';
-    await booking.save();
-
-    return { message: `Booking '${booking.bookingId}' cancelled. Reason: ${reason || 'Admin Cancellation'}`, booking };
+    const { bookingService } = await import('./booking.service.js');
+    const result = await bookingService.cancelBooking(bookingId, actor, reason || 'Admin Cancellation');
+    return { message: `Booking '${booking.bookingId}' cancelled. ${result.message}`, booking: result.booking };
   }
 
   // 4. CITY REVENUE ANALYTICS
   async getCityRevenue(assignedCity) {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const cityBookings = await this.getCityBookings(assignedCity);
+    const done = cityBookings.filter((b) => b.status === 'Completed' && new Date(b.completedAt || b.updatedAt) >= startOfMonth);
+
+    let gmv = 0;
+    let platformCut = 0;
+    let partnerPayouts = 0;
+    done.forEach((b) => {
+      const snap = b.financialSnapshot || {};
+      gmv += Number(snap.customerPayable ?? b.amount ?? 0);
+      platformCut += Number(snap.norozzGrossRevenue ?? 0);
+      partnerPayouts += Number(snap.partnerNetEarning ?? 0);
+    });
+
     return {
       assignedCity,
-      grossCityGMV: 485000,
-      platformCut: 97000,
-      partnerPayouts: 388000,
-      period: 'July 2026',
+      grossCityGMV: Math.round(gmv),
+      platformCut: Math.round(platformCut),
+      partnerPayouts: Math.round(partnerPayouts),
+      period: now.toLocaleString('en-IN', { month: 'long', year: 'numeric' }),
     };
   }
 

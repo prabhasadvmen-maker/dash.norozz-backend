@@ -12,21 +12,13 @@ export class CustomerDashboardService {
   // 1. MOBILE HOME FEED
   async getDashboardOverview(customer) {
     const user = await userRepository.findById(customer._id);
-    const recentBookings = await bookingRepository.find({ customer: customer._id }, '', { createdAt: -1 });
-
-    // Auto-cleanup legacy 12450 default from old schema if user has no transactions
-    let userWalletBal = user?.walletBalance || 0;
-    if (userWalletBal === 12450 || user?.availableBalance === 12450) {
-      const { WalletTransaction } = await import('../models/walletTransaction.model.js');
-      const txCount = await WalletTransaction.countDocuments({ user: customer._id });
-      if (txCount === 0) {
-        user.walletBalance = 0;
-        user.availableBalance = 0;
-        user.withdrawableBalance = 0;
-        await user.save();
-        userWalletBal = 0;
-      }
-    }
+    const recentBookings = await bookingRepository.model
+      .find({ customer: customer._id })
+      .select('+completionOtp')
+      .populate('partner', 'name agencyName phone profileImage')
+      .sort({ createdAt: -1 })
+      .limit(3);
+    const userWalletBal = user?.walletBalance || 0;
 
     const activeBanners = await this.getBanners();
 
@@ -39,7 +31,7 @@ export class CustomerDashboardService {
       walletBalance: userWalletBal,
       favoriteServices: user?.favoriteServices || [],
       savedAddresses: user?.addresses || [],
-      recentBookings: recentBookings.slice(0, 3),
+      recentBookings,
     };
   }
 
@@ -222,50 +214,6 @@ export class CustomerDashboardService {
     const user = await userRepository.findById(customer._id);
     const { WalletTransaction } = await import('../models/walletTransaction.model.js');
 
-    // Auto-cleanup legacy 12450 default balance for old accounts without transactions
-    if (user && (user.walletBalance === 12450 || user.availableBalance === 12450)) {
-      user.walletBalance = 0;
-      user.availableBalance = 0;
-      user.withdrawableBalance = 0;
-      await user.save();
-    }
-
-    // Auto-sync any refunded bookings without transaction log
-    try {
-      const { bookingRepository } = await import('../repositories/booking.repository.js');
-      const refundedBookings = await bookingRepository.model.find({
-        customer: customer._id,
-        $or: [{ status: 'Refunded' }, { status: 'refunded' }, { paymentStatus: 'refunded' }]
-      });
-
-      for (const b of refundedBookings) {
-        const existingTxn = await WalletTransaction.findOne({
-          user: customer._id,
-          category: 'Refund',
-          createdAt: { $gte: new Date(new Date(b.updatedAt || b.createdAt).getTime() - 120000) }
-        });
-
-        if (!existingTxn) {
-          const platformFee = b.financialSnapshot?.customerPlatformFee || 50;
-          const pkgAmount = b.refundAmount || b.financialSnapshot?.servicePrice || (b.packageSnapshot?.finalPrice || Math.max(0, (b.amount || 0) - platformFee));
-          const txnId = 'TXN-' + Math.floor(100000 + Math.random() * 900000);
-          await WalletTransaction.create({
-            transactionId: txnId,
-            user: customer._id,
-            type: 'Credit',
-            amount: pkgAmount,
-            category: 'Refund',
-            title: `Refund for Cancelled Service (${b.packageName || 'Service Package'})`,
-            paymentMethod: 'NOROZZ Wallet',
-            status: 'Completed',
-            createdAt: b.updatedAt || new Date(),
-          });
-        }
-      }
-    } catch (e) {
-      console.warn('Auto-sync refund transactions warning:', e);
-    }
-
     // Fetch ONLY real customer wallet transactions
     const rawTxns = await WalletTransaction.find({ user: customer._id }).sort({ createdAt: -1 });
 
@@ -311,74 +259,11 @@ export class CustomerDashboardService {
     };
   }
 
-  async addWalletMoney(customer, data) {
-    const { amount, paymentMethod } = data;
-    const rechargeAmount = Number(amount);
-
-    if (!rechargeAmount || isNaN(rechargeAmount) || rechargeAmount <= 0) {
-      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Please enter a valid positive amount to add.');
-    }
-
-    if (rechargeAmount < 10) {
-      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Minimum amount to add is ₹10.');
-    }
-
-    if (rechargeAmount > 50000) {
-      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Maximum limit per transaction is ₹50,000.');
-    }
-
-    const user = await userRepository.findById(customer._id);
-    if (!user) {
-      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Customer user account not found.');
-    }
-
-    const previousBal = user.walletBalance || 0;
-    const newBal = previousBal + rechargeAmount;
-
-    user.walletBalance = newBal;
-    user.availableBalance = (user.availableBalance || 0) + rechargeAmount;
-    await user.save();
-
-    const txnId = `TXN-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
-    const chosenMethod = paymentMethod || 'UPI / Google Pay / PhonePe';
-
-    // 1. Create WalletTransaction log
-    const { WalletTransaction } = await import('../models/walletTransaction.model.js');
-    const transaction = await WalletTransaction.create({
-      transactionId: txnId,
-      user: customer._id,
-      type: 'Credit',
-      category: 'Added to Wallet',
-      title: `Added from ${chosenMethod.split('/')[0].trim()}`,
-      amount: rechargeAmount,
-      status: 'Completed',
-      paymentMethod: chosenMethod,
-    });
-
-    // 2. Create LedgerEntry log
-    const { LedgerEntry } = await import('../models/ledgerEntry.model.js');
-    await LedgerEntry.create({
-      transactionId: txnId,
-      userId: customer._id,
-      accountType: 'CUSTOMER_WALLET',
-      type: 'CUSTOMER_WALLET_CREDIT',
-      direction: 'CREDIT',
-      amount: rechargeAmount,
-      currency: 'INR',
-      balanceBefore: previousBal,
-      balanceAfter: newBal,
-      referenceType: 'DirectRecharge',
-      referenceId: txnId,
-      status: 'Success',
-      idempotencyKey: `topup_${customer._id}_${Date.now()}`,
-      metadata: { paymentMethod: chosenMethod },
-    }).catch((err) => console.warn('Ledger logging warning:', err));
-
-    return {
-      message: `🎉 ₹${rechargeAmount} added to your NOROZZ Wallet successfully!`,
-      walletBalance: newBal,
-      transaction,
-    };
+  async addWalletMoney() {
+    throw new ApiError(
+      HTTP_STATUS.BAD_REQUEST,
+      'Wallet top-up must be completed through the payment gateway. Please use the "Add Money" payment option.'
+    );
   }
 
   async getNotifications(customer) {
@@ -387,7 +272,7 @@ export class CustomerDashboardService {
 
     const bookings = await bookingRepository.model
       .find({ customer: customer._id })
-      .select('bookingNumber status packageName serviceName updatedAt')
+      .select('bookingId status packageName updatedAt')
       .sort({ updatedAt: -1 })
       .limit(20)
       .lean();
@@ -395,8 +280,8 @@ export class CustomerDashboardService {
       items.push({
         id: `booking-${b._id}`,
         category: 'booking',
-        title: `Booking ${b.bookingNumber || ''} ${b.status}`.trim(),
-        message: b.packageName || b.serviceName || 'Your service booking was updated',
+        title: `Booking ${b.bookingId || ''} ${b.status}`.trim(),
+        message: b.packageName || 'Your service booking was updated',
         createdAt: b.updatedAt,
         link: '/customer/bookings',
       });
@@ -421,9 +306,26 @@ export class CustomerDashboardService {
   }
 
   async getReviews(customer) {
-    return [
-      { id: 'REV-101', service: 'Full Home Deep Cleaning 3BHK', rating: 5, comment: 'CleanPro team did a fantastic job cleaning my balcony and kitchen!', date: '12 June 2026' },
-    ];
+    const { Review } = await import('../models/review.model.js');
+    const reviews = await Review.find({
+      reviewerId: customer._id,
+      reviewerRole: 'CUSTOMER',
+      status: 'PUBLISHED',
+      isDeleted: false,
+    })
+      .populate('orderId', 'bookingId packageName')
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .lean();
+
+    return reviews.map((r) => ({
+      id: r._id,
+      service: r.orderId?.packageName || 'Service',
+      bookingId: r.orderId?.bookingId || '',
+      rating: r.rating,
+      comment: r.comment || '',
+      date: r.createdAt,
+    }));
   }
 
   // 4. FAVORITE SERVICES TOGGLE
@@ -452,32 +354,33 @@ export class CustomerDashboardService {
   }
 
   // 5. BOOKING HISTORY FILTERS
+  async _customerBookings(customer, statuses = null, withOtp = false) {
+    const filter = { customer: customer._id };
+    if (statuses) filter.status = { $in: statuses };
+    const q = bookingRepository.model
+      .find(filter)
+      .populate('category', 'name slug image')
+      .populate('service', 'name slug price finalPrice duration')
+      .populate('partner', 'name agencyName phone profileImage')
+      .sort({ createdAt: -1 });
+    if (withOtp) q.select('+completionOtp');
+    return q;
+  }
+
   async getBookingHistory(customer) {
-    return await bookingRepository.find({ customer: customer._id }, '', { createdAt: -1 });
+    return this._customerBookings(customer, null, true);
   }
 
   async getUpcomingBookings(customer) {
-    return await bookingRepository.find(
-      { customer: customer._id, status: { $in: ['pending', 'assigned', 'in_progress'] } },
-      '',
-      { createdAt: -1 }
-    );
+    return this._customerBookings(customer, ['Pending', 'Assigned', 'Accepted', 'On The Way', 'Started'], true);
   }
 
   async getCompletedBookings(customer) {
-    return await bookingRepository.find(
-      { customer: customer._id, status: 'completed' },
-      '',
-      { createdAt: -1 }
-    );
+    return this._customerBookings(customer, ['Completed']);
   }
 
   async getCancelledBookings(customer) {
-    return await bookingRepository.find(
-      { customer: customer._id, status: 'cancelled' },
-      '',
-      { createdAt: -1 }
-    );
+    return this._customerBookings(customer, ['Cancelled', 'Refunded']);
   }
 
   // 6. REFERRAL & EARN (Database Live Integration & SuperAdmin Configuration)
@@ -590,7 +493,12 @@ export class CustomerDashboardService {
         currency: 'INR',
       });
     }
-    return settings;
+    // Do not expose internal partner commission / penalty configuration to customers
+    return {
+      customerPlatformFeePercent: settings.customerPlatformFeePercent,
+      referralBonusAmount: settings.referralBonusAmount,
+      currency: settings.currency || 'INR',
+    };
   }
 
   async createTicket(userId, ticketData) {

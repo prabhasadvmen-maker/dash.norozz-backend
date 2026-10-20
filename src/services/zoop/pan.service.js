@@ -1,4 +1,4 @@
-import { ZoopClient, isRealZoopConfigured } from './zoopClient.js';
+import { ZoopClient, isRealZoopConfigured, isKycSimulationAllowed, assertKycProviderAvailable } from './zoopClient.js';
 import { User } from '../../models/user.model.js';
 import { KycVerification } from '../../models/kycVerification.model.js';
 import { KycAuditService } from '../kyc/kycAudit.service.js';
@@ -56,7 +56,7 @@ export class PanVerificationService {
         };
       } catch (err) {
         // Fallback for valid format in test mode if HTTP error occurs
-        if (cleanPan.match(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/)) {
+        if (isKycSimulationAllowed() && cleanPan.match(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/)) {
           verificationResult = { verified: true, status: 'VERIFIED', failureReason: '' };
         } else {
           verificationResult = {
@@ -67,7 +67,8 @@ export class PanVerificationService {
         }
       }
     } else {
-      // Simulation mode
+      // Simulation mode (development only)
+      assertKycProviderAvailable();
       console.log(`[ZOOP PAN Simulation] Verified PAN ${this.maskPan(cleanPan)} for partner ${partnerId}`);
       rawResponse = { isSimulation: true, pan: this.maskPan(cleanPan), response_code: '100', response_message: 'PAN Verified (Simulation)' };
     }

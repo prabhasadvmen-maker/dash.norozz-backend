@@ -1,4 +1,4 @@
-import { ZoopClient, isRealZoopConfigured } from './zoopClient.js';
+import { ZoopClient, isRealZoopConfigured, isKycSimulationAllowed, assertKycProviderAvailable } from './zoopClient.js';
 import { User } from '../../models/user.model.js';
 import { KycVerification } from '../../models/kycVerification.model.js';
 import { KycAuditService } from '../kyc/kycAudit.service.js';
@@ -42,9 +42,11 @@ export class DigiLockerService {
           gatewayUrl = rawResponse.gateway_url || rawResponse.url || gatewayUrl;
         }
       } catch (err) {
+        if (!isKycSimulationAllowed()) throw err;
         console.warn('[ZOOP DigiLocker Init Warning] API call failed, using simulation gateway:', err.message);
       }
     } else {
+      assertKycProviderAvailable();
       console.log(`[ZOOP DigiLocker Simulation Init] RequestId: ${requestId}`);
       rawResponse = { isSimulation: true, request_id: requestId, gateway_url: gatewayUrl };
     }

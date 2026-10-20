@@ -1,4 +1,4 @@
-import { ZoopClient, isRealZoopConfigured } from './zoopClient.js';
+import { ZoopClient, isRealZoopConfigured, isKycSimulationAllowed, assertKycProviderAvailable } from './zoopClient.js';
 import { User } from '../../models/user.model.js';
 import { KycVerification } from '../../models/kycVerification.model.js';
 import { KycAuditService } from '../kyc/kycAudit.service.js';
@@ -42,10 +42,11 @@ export class DrivingLicenseVerificationService {
         isVerified = resCode === '100' || resCode === 'SUCCESS' || (rawResponse?.success === true && resCode !== '101' && resCode !== '106');
       } catch (err) {
         // Fallback for valid DL format in test sandbox if HTTP 404/error occurs
-        isVerified = cleanDl.length >= 7;
+        isVerified = isKycSimulationAllowed() && cleanDl.length >= 7;
         rawResponse = { error: err.message, sandboxFallback: isVerified };
       }
     } else {
+      assertKycProviderAvailable();
       console.log(`[ZOOP DL Simulation] Verified DL ${cleanDl} for partner ${partnerId}`);
       rawResponse = { isSimulation: true, dlNumber: cleanDl, status: 'VERIFIED' };
     }

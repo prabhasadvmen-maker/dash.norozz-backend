@@ -61,13 +61,9 @@ const startServer = async () => {
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-  // Catch Unhandled Rejections
+  // Unhandled promise rejections are logged but must not take the whole API down for every customer
   process.on('unhandledRejection', (err) => {
-    console.error('UNHANDLED REJECTION! 💥 Shutting down gracefully...');
-    console.error(err);
-    server.close(() => {
-      process.exit(1);
-    });
+    console.error('UNHANDLED REJECTION (server kept alive):', err);
   });
 };
 

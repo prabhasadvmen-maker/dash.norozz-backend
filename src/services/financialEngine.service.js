@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import crypto from 'crypto';
 import { LedgerEntry } from '../models/ledgerEntry.model.js';
 import { PlatformAccount } from '../models/platformAccount.model.js';
 import { Booking } from '../models/booking.model.js';
@@ -7,396 +7,598 @@ import { WalletTransaction } from '../models/walletTransaction.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 
+const rid = () => crypto.randomBytes(4).toString('hex').toUpperCase();
+const round2 = (n) => Math.round(Number(n || 0) * 100) / 100;
+
+// Partner balances are mirrored across three fields; always move them together.
+const partnerWalletInc = (delta) => ({ walletBalance: delta, availableBalance: delta, withdrawableBalance: delta });
+const customerWalletInc = (delta) => ({ walletBalance: delta, availableBalance: delta });
+
 export class FinancialEngineService {
-  /**
-   * Helper: Unique Transaction ID Generator
-   */
   generateTxnId(prefix = 'LEDGER') {
-    return `${prefix}-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    return `${prefix}-${Date.now()}-${rid()}`;
   }
 
-  /**
-   * Get or Create Norozz Platform Revenue Account
-   */
   async getOrCreatePlatformAccount() {
-    let account = await PlatformAccount.findOne({ accountName: 'Norozz Main Revenue Account' });
-    if (!account) {
-      account = await PlatformAccount.create({ accountName: 'Norozz Main Revenue Account' });
-    }
-    return account;
+    return PlatformAccount.findOneAndUpdate(
+      { accountName: 'Norozz Main Revenue Account' },
+      { $setOnInsert: { accountName: 'Norozz Main Revenue Account' } },
+      { new: true, upsert: true }
+    );
   }
 
   /**
-   * Record Immutable Double-Entry Ledger Entry (Idempotency Protected)
+   * Exactly-once money movement.
+   * 1) Insert the ledger row first (unique idempotencyKey). If it already exists, the movement was already applied -> skip.
+   * 2) Run the atomic mutation. If it throws, remove the row so the operation can be retried.
    */
-  async recordLedgerEntry(data) {
-    const existing = await LedgerEntry.findOne({ idempotencyKey: data.idempotencyKey });
-    if (existing) {
-      return existing; // Return existing record to guarantee idempotency
+  async applyOnce(entry, mutate) {
+    let ledger;
+    try {
+      ledger = await LedgerEntry.create({
+        transactionId: entry.transactionId || this.generateTxnId(entry.accountType),
+        orderId: entry.orderId || null,
+        userId: entry.userId || null,
+        accountType: entry.accountType,
+        type: entry.type,
+        direction: entry.direction,
+        amount: round2(entry.amount),
+        currency: 'INR',
+        referenceType: entry.referenceType || 'Booking',
+        referenceId: String(entry.referenceId || ''),
+        status: 'Pending',
+        idempotencyKey: entry.idempotencyKey,
+        metadata: entry.metadata || {},
+      });
+    } catch (err) {
+      if (err.code === 11000) return { applied: false };
+      throw err;
     }
 
-    const txnId = data.transactionId || this.generateTxnId(data.accountType || 'LEDGER');
+    try {
+      const result = (await mutate()) || {};
+      ledger.balanceBefore = result.balanceBefore ?? 0;
+      ledger.balanceAfter = result.balanceAfter ?? 0;
+      ledger.status = 'Success';
+      await ledger.save();
+      return { applied: true, result };
+    } catch (err) {
+      await LedgerEntry.deleteOne({ _id: ledger._id }).catch(() => {});
+      throw err;
+    }
+  }
 
-    return await LedgerEntry.create({
-      transactionId: txnId,
-      orderId: data.orderId || null,
-      userId: data.userId || null,
-      accountType: data.accountType,
-      type: data.type,
-      direction: data.direction,
-      amount: Number(data.amount),
-      currency: data.currency || 'INR',
-      balanceBefore: Number(data.balanceBefore || 0),
-      balanceAfter: Number(data.balanceAfter || 0),
-      referenceType: data.referenceType || 'Booking',
-      referenceId: String(data.referenceId || ''),
-      status: data.status || 'Success',
-      idempotencyKey: data.idempotencyKey,
-      metadata: data.metadata || {},
+  async logWalletTxn({ party, userId, type, category, title, amount, status = 'Completed', paymentMethod, prefix = 'TXN' }) {
+    return WalletTransaction.create({
+      transactionId: `${prefix}-${Date.now()}-${rid()}`,
+      ...(party === 'partner' ? { partnerId: userId } : { user: userId }),
+      type,
+      category,
+      title,
+      amount: round2(amount),
+      status,
+      ...(paymentMethod ? { paymentMethod } : {}),
     });
   }
 
   /**
-   * Hold Customer Payment on Booking Creation / Payment Success
+   * Credit a (customer|partner) wallet with money that has been verified elsewhere (gateway recharge, refund, bonus ...).
+   */
+  async creditWallet({ party = 'customer', userId, amount, category, title, idempotencyKey, referenceType = 'Wallet', referenceId = '', orderId = null, paymentMethod, ledgerType = 'CUSTOMER_WALLET_CREDIT', extraInc = {} }) {
+    const amt = round2(amount);
+    if (!(amt > 0)) throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Invalid credit amount');
+
+    const out = await this.applyOnce(
+      {
+        orderId,
+        userId,
+        accountType: party === 'partner' ? 'PARTNER_WALLET' : 'CUSTOMER_WALLET',
+        type: ledgerType,
+        direction: 'CREDIT',
+        amount: amt,
+        referenceType,
+        referenceId,
+        idempotencyKey,
+      },
+      async () => {
+        const inc = party === 'partner' ? partnerWalletInc(amt) : customerWalletInc(amt);
+        const user = await User.findByIdAndUpdate(userId, { $inc: { ...inc, ...extraInc } }, { new: true });
+        if (!user) throw new ApiError(HTTP_STATUS.NOT_FOUND, 'User not found');
+        return { balanceBefore: round2(user.walletBalance - amt), balanceAfter: user.walletBalance };
+      }
+    );
+
+    if (out.applied) {
+      await this.logWalletTxn({ party, userId, type: 'Credit', category, title, amount: amt, paymentMethod }).catch((e) =>
+        console.warn('Wallet txn log warning:', e.message)
+      );
+    }
+    return out;
+  }
+
+  /**
+   * Atomically debit a wallet. Fails (no change) if the balance is not sufficient.
+   */
+  async debitWalletStrict({ party = 'customer', userId, amount, category, title, idempotencyKey, referenceType = 'Booking', referenceId = '', orderId = null, paymentMethod, ledgerType = 'CUSTOMER_WALLET_DEBIT', extraInc = {} }) {
+    const amt = round2(amount);
+    if (!(amt > 0)) throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Invalid debit amount');
+
+    const out = await this.applyOnce(
+      {
+        orderId,
+        userId,
+        accountType: party === 'partner' ? 'PARTNER_WALLET' : 'CUSTOMER_WALLET',
+        type: ledgerType,
+        direction: 'DEBIT',
+        amount: amt,
+        referenceType,
+        referenceId,
+        idempotencyKey,
+      },
+      async () => {
+        const inc = party === 'partner' ? partnerWalletInc(-amt) : customerWalletInc(-amt);
+        const user = await User.findOneAndUpdate(
+          { _id: userId, walletBalance: { $gte: amt } },
+          { $inc: { ...inc, ...extraInc } },
+          { new: true }
+        );
+        if (!user) {
+          const current = await User.findById(userId).select('walletBalance');
+          throw new ApiError(
+            HTTP_STATUS.BAD_REQUEST,
+            `Insufficient NOROZZ Wallet balance! Your available balance is ₹${current?.walletBalance || 0}, but required amount is ₹${amt}.`
+          );
+        }
+        return { balanceBefore: round2(user.walletBalance + amt), balanceAfter: user.walletBalance };
+      }
+    );
+
+    if (out.applied) {
+      await this.logWalletTxn({ party, userId, type: 'Debit', category, title, amount: amt, paymentMethod }).catch((e) =>
+        console.warn('Wallet txn log warning:', e.message)
+      );
+    }
+    return out;
+  }
+
+  /**
+   * Payment confirmed (wallet debited or gateway signature verified) -> funds held in escrow.
+   * Atomic + idempotent: only the first caller flips the booking out of PAYMENT_PENDING.
    */
   async holdCustomerPayment(bookingId, paymentMethod = 'UPI') {
-    const booking = await Booking.findById(bookingId);
-    if (!booking) throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Booking not found');
+    const pending = await Booking.findById(bookingId);
+    if (!pending) throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Booking not found');
 
-    if (booking.financialStatus === 'AMOUNT_HELD' || booking.financialStatus === 'SETTLED') {
-      return booking; // Idempotent return
+    const payable = round2(pending.financialSnapshot?.customerPayable ?? pending.amount ?? 0);
+
+    const held = await Booking.findOneAndUpdate(
+      { _id: bookingId, financialStatus: 'PAYMENT_PENDING' },
+      {
+        $set: {
+          financialStatus: 'AMOUNT_HELD',
+          paymentStatus: 'paid',
+          paymentMethod,
+          prepaidAmount: payable,
+          paymentConfirmedAt: new Date(),
+        },
+      },
+      { new: true }
+    );
+
+    if (!held) {
+      // Already held / settled / cancelled: idempotent no-op
+      return { booking: await Booking.findById(bookingId), alreadyProcessed: true };
     }
 
-    const snapshot = booking.financialSnapshot || {};
-    const payableAmount = snapshot.customerPayable || booking.amount || 0;
-
-    const customer = await User.findById(booking.customer);
-    if (customer) {
-      const balanceBefore = customer.heldBalance || 0;
-      customer.heldBalance = balanceBefore + payableAmount;
-      await customer.save();
-
-      // Record Ledger Entry
-      await this.recordLedgerEntry({
-        orderId: booking._id,
-        userId: customer._id,
+    await this.applyOnce(
+      {
+        orderId: held._id,
+        userId: held.customer,
         accountType: 'ESCROW_HOLD',
         type: 'CUSTOMER_PAYMENT',
         direction: 'CREDIT',
-        amount: payableAmount,
-        balanceBefore,
-        balanceAfter: customer.heldBalance,
+        amount: payable,
         referenceType: 'Booking',
-        referenceId: booking.bookingId,
-        idempotencyKey: `HOLD-${booking.bookingId}`,
-        metadata: { paymentMethod, snapshot },
-      });
-    }
+        referenceId: held.bookingId,
+        idempotencyKey: `HOLD-${held.bookingId}`,
+        metadata: { paymentMethod },
+      },
+      async () => {
+        const customer = await User.findByIdAndUpdate(held.customer, { $inc: { heldBalance: payable } }, { new: true });
+        return { balanceBefore: round2((customer?.heldBalance || 0) - payable), balanceAfter: customer?.heldBalance || 0 };
+      }
+    );
 
-    booking.financialStatus = 'AMOUNT_HELD';
-    booking.paymentStatus = 'paid';
-    booking.paymentMethod = paymentMethod;
-    await booking.save();
-
-    return booking;
+    return { booking: held, alreadyProcessed: false };
   }
 
   /**
-   * Execute Atomic Service Settlement (Double-Entry Ledger)
-   * Customer Paid (₹1,050) -> Partner Net Earning (+₹950) & Norozz Revenue (+₹100)
+   * Service completed -> release escrow, pay partner, collect platform revenue. Runs exactly once per booking.
+   *
+   *  Base service  : paid by customer up-front (held). Partner receives partnerNetEarning in wallet.
+   *  Extra services: collected by the partner directly on site. Partner wallet is debited the platform dues on them.
    */
   async settleBooking(bookingId) {
-    const booking = await Booking.findById(bookingId).populate('customer partner');
+    const booking = await Booking.findById(bookingId);
     if (!booking) throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Booking not found');
 
-    // Double settlement guard
     if (booking.financialStatus === 'SETTLED') {
-      return { message: 'Booking already settled', booking };
+      return { message: 'Booking already settled', booking, alreadySettled: true };
     }
 
-    const snapshot = booking.financialSnapshot || {};
-    const customerPayable = snapshot.customerPayable || booking.amount || 1050;
-    const partnerNetEarning = snapshot.partnerNetEarning ?? (customerPayable - 100);
-    const partnerCommission = snapshot.partnerCommission ?? 50;
-    const customerPlatformFee = snapshot.customerPlatformFee ?? 50;
-    const norozzGrossRevenue = snapshot.norozzGrossRevenue ?? 100;
+    // Only the caller that moves HELD -> SETTLEMENT_PENDING (or resumes a failed settlement) proceeds
+    const locked = await Booking.findOneAndUpdate(
+      { _id: bookingId, financialStatus: { $in: ['AMOUNT_HELD', 'SETTLEMENT_PENDING'] } },
+      { $set: { financialStatus: 'SETTLEMENT_PENDING' } },
+      { new: true }
+    );
+    if (!locked) {
+      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Payment for this booking has not been confirmed, so it cannot be settled.');
+    }
 
-    const customerId = booking.customer?._id || booking.customer;
-    const partnerId = booking.partner?._id || booking.partner;
+    const snapshot = locked.financialSnapshot || {};
+    const base = locked.baseFinancialSnapshot || snapshot;
+    const ref = locked.bookingId;
 
-    // 1. Update Customer Account (Release Held Balance -> Ledger Debit)
-    if (customerId) {
-      const customer = await User.findById(customerId);
-      if (customer) {
-        const balBefore = customer.heldBalance || 0;
-        customer.heldBalance = Math.max(0, balBefore - customerPayable);
-        customer.lifetimeSpent = (customer.lifetimeSpent || 0) + customerPayable;
-        await customer.save();
+    const prepaid = round2(locked.prepaidAmount || base.customerPayable || locked.amount || 0);
+    const partnerNet = round2(base.partnerNetEarning || 0);
+    const baseCommission = round2(base.partnerCommission || 0);
+    const baseFee = round2(base.customerPlatformFee || 0);
+    const baseNorozz = round2(base.norozzGrossRevenue || 0);
 
-        await this.recordLedgerEntry({
-          orderId: booking._id,
-          userId: customer._id,
+    // Extras (collected by partner on site)
+    const extrasFee = Math.max(0, round2((snapshot.customerPlatformFee || 0) - baseFee));
+    const extrasCommission = Math.max(0, round2((snapshot.partnerCommission || 0) - baseCommission));
+    const extrasDues = round2(extrasFee + extrasCommission);
+    const extrasGross = round2(locked.extraServices?.reduce((s, i) => s + Number(i.price || 0), 0) || 0);
+    const extrasPartnerNet = Math.max(0, round2(extrasGross - extrasCommission));
+
+    // 1. Customer: release escrow
+    if (locked.customer) {
+      await this.applyOnce(
+        {
+          orderId: locked._id,
+          userId: locked.customer,
           accountType: 'CUSTOMER_WALLET',
           type: 'CUSTOMER_WALLET_DEBIT',
           direction: 'DEBIT',
-          amount: customerPayable,
-          balanceBefore: balBefore,
-          balanceAfter: customer.heldBalance,
+          amount: prepaid,
           referenceType: 'Booking',
-          referenceId: booking.bookingId,
-          idempotencyKey: `SETTLE-CUST-${booking.bookingId}`,
-          metadata: { snapshot },
-        });
-      }
-    }
-
-    // 2. Update Partner Account (Dual Accounting: CASH vs ONLINE)
-    if (partnerId) {
-      const partner = await User.findById(partnerId);
-      if (partner) {
-        const balBefore = partner.walletBalance ?? partner.availableBalance ?? 0;
-
-        const isCash = String(booking.paymentMethod || '').toLowerCase().includes('cash') ||
-                       String(booking.extraPaymentMethod || '').toLowerCase().includes('cash');
-
-        let newBal = balBefore;
-        let txnType = 'Credit';
-        let txnCategory = 'Job Earnings';
-        let txnTitle = '';
-        let txnAmount = 0;
-
-        if (isCash) {
-          // CASH PAYMENT: Customer paid 100% cash directly to Partner.
-          // Deduct platform commission / fee from Partner's Wallet!
-          const deductionAmount = partnerCommission;
-          newBal = Math.max(0, balBefore - deductionAmount);
-
-          partner.walletBalance = newBal;
-          partner.availableBalance = newBal;
-          partner.withdrawableBalance = newBal;
-          partner.totalCommissionPaid = (partner.totalCommissionPaid || 0) + deductionAmount;
-          await partner.save();
-
-          txnType = 'Debit';
-          txnCategory = 'Service Booking';
-          txnTitle = `Platform Fee Deduction (Cash Job #${booking.bookingId})`;
-          txnAmount = deductionAmount;
-
-          await this.recordLedgerEntry({
-            orderId: booking._id,
-            userId: partner._id,
-            accountType: 'PARTNER_WALLET',
-            type: 'COMMISSION_DEDUCTION',
-            direction: 'DEBIT',
-            amount: deductionAmount,
-            balanceBefore: balBefore,
-            balanceAfter: newBal,
-            referenceType: 'Booking',
-            referenceId: booking.bookingId,
-            idempotencyKey: `SETTLE-PARTNER-${booking.bookingId}`,
-            metadata: { isCash: true, deductionAmount, partnerCommission, bookingId: booking.bookingId },
-          });
-        } else {
-          // ONLINE PAYMENT: Customer paid online to Norozz Escrow.
-          // Deduct platform commission & Credit remaining Net Earning to Partner's Wallet!
-          const creditAmount = partnerNetEarning;
-          newBal = balBefore + creditAmount;
-
-          partner.walletBalance = newBal;
-          partner.availableBalance = newBal;
-          partner.withdrawableBalance = (partner.withdrawableBalance || 0) + creditAmount;
-          partner.lifetimeEarnings = (partner.lifetimeEarnings || 0) + creditAmount;
-          partner.totalCommissionPaid = (partner.totalCommissionPaid || 0) + partnerCommission;
-          await partner.save();
-
-          txnType = 'Credit';
-          txnCategory = 'Job Earnings';
-          txnTitle = `Job Net Earnings Credited (Online Job #${booking.bookingId})`;
-          txnAmount = creditAmount;
-
-          await this.recordLedgerEntry({
-            orderId: booking._id,
-            userId: partner._id,
-            accountType: 'PARTNER_WALLET',
-            type: 'PARTNER_EARNING',
-            direction: 'CREDIT',
-            amount: creditAmount,
-            balanceBefore: balBefore,
-            balanceAfter: newBal,
-            referenceType: 'Booking',
-            referenceId: booking.bookingId,
-            idempotencyKey: `SETTLE-PARTNER-${booking.bookingId}`,
-            metadata: { isCash: false, creditAmount, partnerCommission, serviceValue: snapshot.servicePrice || 1000 },
-          });
+          referenceId: ref,
+          idempotencyKey: `SETTLE-CUST-${ref}`,
+          metadata: { note: 'Escrow released on service completion' },
+        },
+        async () => {
+          const c = await User.findByIdAndUpdate(
+            locked.customer,
+            { $inc: { heldBalance: -prepaid, lifetimeSpent: prepaid + extrasGross + extrasFee } },
+            { new: true }
+          );
+          return { balanceBefore: round2((c?.heldBalance || 0) + prepaid), balanceAfter: c?.heldBalance || 0 };
         }
+      );
+    }
 
-        // Record WalletTransaction entry for Partner UI visibility
-        const txnId = `TXN-${Math.floor(100000 + Math.random() * 900000)}`;
-        await WalletTransaction.create({
-          transactionId: txnId,
-          partnerId: partner._id,
-          type: txnType,
-          category: txnCategory,
-          title: txnTitle,
-          amount: txnAmount,
-          status: 'Completed',
-        }).catch((err) => console.warn('Wallet transaction logging warning:', err));
+    // 2. Partner: credit net earning for the prepaid base service
+    if (locked.partner) {
+      const credit = await this.applyOnce(
+        {
+          orderId: locked._id,
+          userId: locked.partner,
+          accountType: 'PARTNER_WALLET',
+          type: 'PARTNER_EARNING',
+          direction: 'CREDIT',
+          amount: partnerNet,
+          referenceType: 'Booking',
+          referenceId: ref,
+          idempotencyKey: `SETTLE-PARTNER-${ref}`,
+          metadata: { partnerCommission: baseCommission, serviceValue: base.servicePrice || 0 },
+        },
+        async () => {
+          const p = await User.findByIdAndUpdate(
+            locked.partner,
+            { $inc: { ...partnerWalletInc(partnerNet), lifetimeEarnings: partnerNet + extrasPartnerNet, totalCommissionPaid: baseCommission + extrasCommission } },
+            { new: true }
+          );
+          return { balanceBefore: round2((p?.walletBalance || 0) - partnerNet), balanceAfter: p?.walletBalance || 0 };
+        }
+      );
+      if (credit.applied) {
+        await this.logWalletTxn({
+          party: 'partner',
+          userId: locked.partner,
+          type: 'Credit',
+          category: 'Job Earnings',
+          title: `Job Net Earnings Credited (Job #${ref})`,
+          amount: partnerNet,
+        }).catch((e) => console.warn('Wallet txn log warning:', e.message));
+      }
+
+      // 2b. Partner: platform dues on extras the partner collected directly
+      if (extrasDues > 0) {
+        const dues = await this.applyOnce(
+          {
+            orderId: locked._id,
+            userId: locked.partner,
+            accountType: 'PARTNER_WALLET',
+            type: 'PARTNER_COMMISSION',
+            direction: 'DEBIT',
+            amount: extrasDues,
+            referenceType: 'Booking',
+            referenceId: ref,
+            idempotencyKey: `SETTLE-PARTNER-EXTRAS-${ref}`,
+            metadata: { extrasFee, extrasCommission, collectedOnSite: extrasGross + extrasFee },
+          },
+          async () => {
+            const p = await User.findByIdAndUpdate(locked.partner, { $inc: partnerWalletInc(-extrasDues) }, { new: true });
+            return { balanceBefore: round2((p?.walletBalance || 0) + extrasDues), balanceAfter: p?.walletBalance || 0 };
+          }
+        );
+        if (dues.applied) {
+          await this.logWalletTxn({
+            party: 'partner',
+            userId: locked.partner,
+            type: 'Debit',
+            category: 'Service Booking',
+            title: `Platform fee on extra services collected on site (Job #${ref})`,
+            amount: extrasDues,
+          }).catch((e) => console.warn('Wallet txn log warning:', e.message));
+        }
       }
     }
 
-    // 3. Update Norozz Platform Revenue Account
-    const platformAccount = await this.getOrCreatePlatformAccount();
-    const grossRevBefore = platformAccount.grossRevenue || 0;
-    platformAccount.grossCustomerFees = (platformAccount.grossCustomerFees || 0) + customerPlatformFee;
-    platformAccount.grossPartnerCommissions = (platformAccount.grossPartnerCommissions || 0) + partnerCommission;
-    platformAccount.grossRevenue = grossRevBefore + norozzGrossRevenue;
-    platformAccount.netPlatformRevenue = (platformAccount.netPlatformRevenue || 0) + norozzGrossRevenue;
-    await platformAccount.save();
+    // 3. Platform revenue
+    const revenue = round2(baseNorozz + extrasDues);
+    await this.applyOnce(
+      {
+        orderId: locked._id,
+        userId: null,
+        accountType: 'NOROZZ_REVENUE',
+        type: 'NOROZZ_REVENUE',
+        direction: 'CREDIT',
+        amount: Math.max(0, revenue),
+        referenceType: 'Booking',
+        referenceId: ref,
+        idempotencyKey: `SETTLE-NOROZZ-${ref}`,
+        metadata: { customerPlatformFee: baseFee + extrasFee, partnerCommission: baseCommission + extrasCommission, netRevenue: revenue },
+      },
+      async () => {
+        const acc = await PlatformAccount.findOneAndUpdate(
+          { accountName: 'Norozz Main Revenue Account' },
+          {
+            $inc: {
+              grossCustomerFees: baseFee + extrasFee,
+              grossPartnerCommissions: baseCommission + extrasCommission,
+              grossRevenue: revenue,
+              netPlatformRevenue: revenue,
+            },
+          },
+          { new: true, upsert: true }
+        );
+        return { balanceBefore: round2((acc.grossRevenue || 0) - revenue), balanceAfter: acc.grossRevenue };
+      }
+    );
 
-    await this.recordLedgerEntry({
-      orderId: booking._id,
-      userId: null,
-      accountType: 'NOROZZ_REVENUE',
-      type: 'NOROZZ_REVENUE',
-      direction: 'CREDIT',
-      amount: norozzGrossRevenue,
-      balanceBefore: grossRevBefore,
-      balanceAfter: platformAccount.grossRevenue,
-      referenceType: 'Booking',
-      referenceId: booking.bookingId,
-      idempotencyKey: `SETTLE-NOROZZ-${booking.bookingId}`,
-      metadata: { customerPlatformFee, partnerCommission, grossRevenue: norozzGrossRevenue },
-    });
-
-    booking.financialStatus = 'SETTLED';
-    booking.status = 'Completed';
-    await booking.save();
+    const settled = await Booking.findByIdAndUpdate(
+      bookingId,
+      { $set: { financialStatus: 'SETTLED' } },
+      { new: true }
+    );
 
     return {
-      message: '🎉 Booking financial settlement executed successfully!',
+      message: 'Booking financial settlement executed successfully!',
       financialStatus: 'SETTLED',
       breakdown: {
-        customerPayable,
-        partnerNetEarning,
-        partnerCommission,
-        customerPlatformFee,
-        norozzGrossRevenue,
+        customerPayable: prepaid + extrasGross + extrasFee,
+        partnerNetEarning: partnerNet + extrasPartnerNet,
+        partnerCommission: baseCommission + extrasCommission,
+        customerPlatformFee: baseFee + extrasFee,
+        norozzGrossRevenue: revenue,
       },
-      booking,
+      booking: settled,
     };
   }
 
   /**
-   * Process Partner Bank Withdrawal Request (Atomic Lock)
+   * Refund a held (escrowed) booking payment back to the customer wallet.
+   * `refundPlatformFee=false` keeps the platform fee as revenue (customer-initiated cancellation).
+   */
+  async refundHeldPayment(booking, { refundPlatformFee = false, reason = 'Booking cancelled' } = {}) {
+    const prepaid = round2(booking.prepaidAmount || booking.financialSnapshot?.customerPayable || booking.amount || 0);
+    const fee = round2((booking.baseFinancialSnapshot || booking.financialSnapshot)?.customerPlatformFee || 0);
+    const refund = round2(Math.max(0, refundPlatformFee ? prepaid : prepaid - fee));
+    const retained = round2(prepaid - refund);
+    const ref = booking.bookingId;
+
+    // Release escrow
+    await this.applyOnce(
+      {
+        orderId: booking._id,
+        userId: booking.customer,
+        accountType: 'ESCROW_HOLD',
+        type: 'REFUND',
+        direction: 'DEBIT',
+        amount: prepaid,
+        referenceType: 'Booking',
+        referenceId: ref,
+        idempotencyKey: `REFUND-ESCROW-${ref}`,
+        metadata: { reason },
+      },
+      async () => {
+        const c = await User.findByIdAndUpdate(booking.customer, { $inc: { heldBalance: -prepaid } }, { new: true });
+        return { balanceBefore: round2((c?.heldBalance || 0) + prepaid), balanceAfter: c?.heldBalance || 0 };
+      }
+    );
+
+    if (refund > 0) {
+      await this.creditWallet({
+        party: 'customer',
+        userId: booking.customer,
+        amount: refund,
+        category: 'Refund',
+        title: `Refund for Cancelled Service (${booking.packageName || 'Service Package'})`,
+        idempotencyKey: `REFUND-WALLET-${ref}`,
+        referenceType: 'Booking',
+        referenceId: ref,
+        orderId: booking._id,
+        paymentMethod: 'NOROZZ Wallet',
+        ledgerType: 'REFUND',
+      });
+    }
+
+    if (retained > 0) {
+      await this.applyOnce(
+        {
+          orderId: booking._id,
+          userId: null,
+          accountType: 'NOROZZ_REVENUE',
+          type: 'CANCELLATION_CHARGE',
+          direction: 'CREDIT',
+          amount: retained,
+          referenceType: 'Booking',
+          referenceId: ref,
+          idempotencyKey: `REFUND-RETAINED-${ref}`,
+          metadata: { reason: 'Non-refundable platform fee retained' },
+        },
+        async () => {
+          const acc = await PlatformAccount.findOneAndUpdate(
+            { accountName: 'Norozz Main Revenue Account' },
+            { $inc: { grossCustomerFees: retained, grossRevenue: retained, netPlatformRevenue: retained } },
+            { new: true, upsert: true }
+          );
+          return { balanceBefore: round2((acc.grossRevenue || 0) - retained), balanceAfter: acc.grossRevenue };
+        }
+      );
+    }
+
+    await PlatformAccount.findOneAndUpdate(
+      { accountName: 'Norozz Main Revenue Account' },
+      { $inc: { totalRefundsAdjusted: refund } },
+      { upsert: true }
+    );
+
+    return { refund, retained };
+  }
+
+  /**
+   * Partner withdrawal REQUEST. Funds move wallet -> withdrawalPending atomically and the request is recorded as Pending.
+   * Actual bank payout is executed by finance/admin (or a payout provider) and is not simulated here.
    */
   async processPartnerWithdrawal(partnerId, amount) {
-    const partner = await User.findById(partnerId);
-    if (!partner) throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found');
-
-    const numAmount = Number(amount);
-    if (isNaN(numAmount) || numAmount <= 0) {
+    const numAmount = round2(amount);
+    if (!Number.isFinite(numAmount) || numAmount <= 0) {
       throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Please enter a valid withdrawal amount');
     }
 
-    const currentWithdrawable = partner.withdrawableBalance ?? partner.availableBalance ?? 0;
-    if (numAmount > currentWithdrawable) {
-      throw new ApiError(HTTP_STATUS.BAD_REQUEST, `Insufficient withdrawable balance. Available: ₹${currentWithdrawable.toLocaleString('en-IN')}`);
+    const partner = await User.findById(partnerId).select('bankDetails kycStatus status role');
+    if (!partner || partner.role !== 'partner') throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found');
+    if (partner.kycStatus !== 'approved' || partner.status !== 'active') {
+      throw new ApiError(HTTP_STATUS.FORBIDDEN, 'Withdrawals are available only for active, KYC-approved partners.');
+    }
+    const bank = partner.bankDetails || {};
+    if (!bank.accountNumber && !bank.upiId) {
+      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Please add your bank account or UPI ID before requesting a withdrawal.');
     }
 
-    const balBefore = partner.availableBalance || 0;
-    const newBal = Math.max(0, balBefore - numAmount);
+    const txnId = `TXN-WTH-${Date.now()}-${rid()}`;
 
-    partner.availableBalance = newBal;
-    partner.walletBalance = newBal;
-    partner.withdrawableBalance = Math.max(0, currentWithdrawable - numAmount);
-    partner.withdrawalPending = (partner.withdrawalPending || 0) + numAmount;
-    await partner.save();
-
-    const txnId = `TXN-WTH-${Math.floor(100000 + Math.random() * 900000)}`;
-
-    await this.recordLedgerEntry({
-      userId: partner._id,
-      accountType: 'PARTNER_WALLET',
-      type: 'WITHDRAWAL',
-      direction: 'DEBIT',
-      amount: numAmount,
-      balanceBefore: balBefore,
-      balanceAfter: newBal,
-      referenceType: 'Withdrawal',
-      referenceId: txnId,
-      idempotencyKey: `WITHDRAW-${txnId}`,
-      metadata: { bankDetails: partner.bankDetails },
-    });
+    const out = await this.applyOnce(
+      {
+        userId: partnerId,
+        accountType: 'PARTNER_WALLET',
+        type: 'WITHDRAWAL',
+        direction: 'DEBIT',
+        amount: numAmount,
+        referenceType: 'Withdrawal',
+        referenceId: txnId,
+        idempotencyKey: `WITHDRAW-${txnId}`,
+        metadata: { bankName: bank.bankName || '', upiId: bank.upiId || '' },
+      },
+      async () => {
+        const p = await User.findOneAndUpdate(
+          { _id: partnerId, walletBalance: { $gte: numAmount } },
+          { $inc: { ...partnerWalletInc(-numAmount), withdrawalPending: numAmount } },
+          { new: true }
+        );
+        if (!p) {
+          const cur = await User.findById(partnerId).select('walletBalance');
+          throw new ApiError(
+            HTTP_STATUS.BAD_REQUEST,
+            `Insufficient wallet balance. Available: ₹${Number(cur?.walletBalance || 0).toLocaleString('en-IN')}`
+          );
+        }
+        return { balanceBefore: round2(p.walletBalance + numAmount), balanceAfter: p.walletBalance };
+      }
+    );
 
     await WalletTransaction.create({
       transactionId: txnId,
-      partnerId: partner._id,
+      partnerId,
       type: 'Debit',
       category: 'Bank Withdrawal',
-      title: `Direct Bank Payout to ${partner.bankDetails?.bankName || 'HDFC Bank'}`,
+      title: `Withdrawal request to ${bank.bankName || bank.upiId || 'your bank account'}`,
       amount: numAmount,
-      status: 'Completed',
+      status: 'Pending',
     });
 
+    const updated = await User.findById(partnerId).select('walletBalance withdrawableBalance availableBalance');
     return {
-      message: `🎉 ₹${numAmount.toLocaleString('en-IN')} payout transfer initiated to your bank account!`,
-      withdrawableBalance: partner.withdrawableBalance,
-      availableBalance: partner.availableBalance,
+      message: `Withdrawal request of ₹${numAmount.toLocaleString('en-IN')} submitted. It will be transferred to your account after processing.`,
+      walletBalance: updated.walletBalance,
+      withdrawableBalance: updated.withdrawableBalance,
+      availableBalance: updated.availableBalance,
       transactionId: txnId,
+      status: 'Pending',
+      applied: out.applied,
     };
   }
 
-  /**
-   * Get Master Admin Financial Overview & Revenue Analytics
-   */
   async getFinancialOverview() {
     const platformAccount = await this.getOrCreatePlatformAccount();
     const ledgerCount = await LedgerEntry.countDocuments();
     const settledBookingsCount = await Booking.countDocuments({ financialStatus: 'SETTLED' });
 
-    // Calculate customer total wallet liability
+    const [gbv] = await Booking.aggregate([
+      { $match: { financialStatus: 'SETTLED' } },
+      { $group: { _id: null, total: { $sum: { $ifNull: ['$prepaidAmount', '$amount'] } } } },
+    ]);
+
     const customerAgg = await User.aggregate([
       { $match: { role: 'customer' } },
-      { $group: { _id: null, totalAvailable: { $sum: '$availableBalance' }, totalHeld: { $sum: '$heldBalance' } } },
+      { $group: { _id: null, totalAvailable: { $sum: '$walletBalance' }, totalHeld: { $sum: '$heldBalance' } } },
     ]);
-
-    // Calculate partner total earnings liability
     const partnerAgg = await User.aggregate([
       { $match: { role: 'partner' } },
-      { $group: { _id: null, totalWithdrawable: { $sum: '$withdrawableBalance' }, totalEarned: { $sum: '$lifetimeEarnings' } } },
+      { $group: { _id: null, totalWithdrawable: { $sum: '$walletBalance' }, totalEarned: { $sum: '$lifetimeEarnings' }, totalPending: { $sum: '$withdrawalPending' } } },
     ]);
 
-    const customerLiability = customerAgg[0]?.totalAvailable || 0;
-    const customerHeld = customerAgg[0]?.totalHeld || 0;
-    const partnerWithdrawable = partnerAgg[0]?.totalWithdrawable || 0;
-    const partnerTotalEarned = partnerAgg[0]?.totalEarned || 85200;
-
-    const grossCustomerFees = platformAccount.grossCustomerFees || 5000;
-    const grossPartnerCommissions = platformAccount.grossPartnerCommissions || 5000;
-    const grossRevenue = platformAccount.grossRevenue || 10000;
-    const refunds = platformAccount.totalRefundsAdjusted || 1000;
-    const gatewayFees = platformAccount.totalGatewayFees || 300;
-    const netRevenue = Math.max(0, grossRevenue - refunds - gatewayFees);
+    const grossCustomerFees = platformAccount.grossCustomerFees || 0;
+    const grossPartnerCommissions = platformAccount.grossPartnerCommissions || 0;
+    const grossRevenue = platformAccount.grossRevenue || 0;
+    const refunds = platformAccount.totalRefundsAdjusted || 0;
+    const gatewayFees = platformAccount.totalGatewayFees || 0;
+    const partnerTotalEarned = partnerAgg[0]?.totalEarned || 0;
 
     return {
       overview: {
-        grossBookingValue: (settledBookingsCount * 1000) || 100000,
+        grossBookingValue: gbv?.total || 0,
         customerPlatformFees: grossCustomerFees,
         partnerCommissions: grossPartnerCommissions,
         grossPlatformRevenue: grossRevenue,
         refunds,
         gatewayFees,
-        netPlatformRevenue: netRevenue,
+        netPlatformRevenue: (platformAccount.netPlatformRevenue || 0) - gatewayFees,
       },
       partnerMetrics: {
         partnerGrossEarnings: partnerTotalEarned + grossPartnerCommissions,
         partnerCommissionsPaid: grossPartnerCommissions,
         partnerNetEarnings: partnerTotalEarned,
-        pendingPartnerPayout: partnerWithdrawable,
+        pendingPartnerPayout: partnerAgg[0]?.totalPending || 0,
+        partnerWalletLiability: partnerAgg[0]?.totalWithdrawable || 0,
       },
       customerMetrics: {
-        customerWalletLiability: customerLiability,
-        customerHeldEscrow: customerHeld,
+        customerWalletLiability: customerAgg[0]?.totalAvailable || 0,
+        customerHeldEscrow: customerAgg[0]?.totalHeld || 0,
         customerRefunds: refunds,
       },
       ledgerInfo: {

@@ -12,7 +12,7 @@ export class NotificationService {
    */
   async sendEmailOtp(recipientEmail, otpCode) {
     try {
-      console.log(`📧 Sending Email OTP [${otpCode}] to ${recipientEmail} via Brevo...`);
+      console.log(`📧 Sending Email OTP [****] to ${recipientEmail} via Brevo...`);
 
       const payload = {
         sender: {
@@ -69,7 +69,7 @@ export class NotificationService {
    */
   async sendSmsOtp(phoneNumber, otpCode) {
     try {
-      console.log(`📱 Sending Mobile SMS OTP [${otpCode}] to ${phoneNumber}...`);
+      console.log(`📱 Sending Mobile SMS OTP [****] to ${phoneNumber}...`);
       
       const apitxtApiKey = process.env.APITXT_API_KEY;
       const rawDigits = phoneNumber.replace(/\D/g, '');
@@ -119,7 +119,7 @@ export class NotificationService {
         });
         console.log('✅ Mobile SMS OTP Sent via Twilio to:', phoneNumber);
       } else {
-        console.log(`ℹ️ SMS Gateway Ready. Mobile OTP Code: [${otpCode}] ready for verification.`);
+        console.log(`ℹ️ SMS Gateway Ready. Mobile OTP generated [****] ready for verification.`);
       }
       return true;
     } catch (error) {

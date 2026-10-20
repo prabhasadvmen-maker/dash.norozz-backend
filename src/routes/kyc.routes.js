@@ -12,6 +12,7 @@ router.all('/digilocker/callback', kycController.callbackDigiLocker);
 
 // Partner KYC Verification Endpoints (JWT Protected)
 router.use(verifyJWT);
+router.use(authorizeRoles(ROLES.PARTNER, ROLES.SUPER_ADMIN, ROLES.CITY_ADMIN, ROLES.ADMIN));
 
 router.post('/otp/send', kycController.sendMobileOtp);
 router.post('/otp/verify', kycController.verifyMobileOtp);

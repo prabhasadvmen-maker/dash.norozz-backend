@@ -1,6 +1,7 @@
 import { verifyAccessToken } from '../helpers/jwt.helper.js';
 import { ApiError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
+import { ROLES } from '../constants/roles.constant.js';
 import { User } from '../models/user.model.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 
@@ -16,21 +17,29 @@ export const verifyJWT = asyncHandler(async (req, res, next) => {
     throw new ApiError(HTTP_STATUS.UNAUTHORIZED, 'Unauthorized request: Token missing');
   }
 
+  let decoded;
   try {
-    const decoded = verifyAccessToken(token);
-    const user = await User.findById(decoded.id).populate('assignedCity', 'name');
-
-    if (!user) {
-      throw new ApiError(HTTP_STATUS.UNAUTHORIZED, 'Invalid Access Token: User not found');
-    }
-
-    if (user.status === 'disabled') {
-      throw new ApiError(HTTP_STATUS.FORBIDDEN, 'Account is disabled. Contact Super Admin.');
-    }
-
-    req.user = user;
-    next();
+    decoded = verifyAccessToken(token);
   } catch (error) {
     throw new ApiError(HTTP_STATUS.UNAUTHORIZED, error?.message || 'Invalid or expired Access Token');
   }
+
+  const user = await User.findById(decoded.id).populate('assignedCity', 'name');
+
+  if (!user) {
+    throw new ApiError(HTTP_STATUS.UNAUTHORIZED, 'Invalid Access Token: User not found');
+  }
+
+  if (user.status === 'deleted') {
+    throw new ApiError(HTTP_STATUS.FORBIDDEN, 'Account is disabled. Contact Super Admin.');
+  }
+
+  // Blocked customers / admins are locked out. Blocked or suspended partners may still sign in to see
+  // their notice, but every booking feature re-checks status === 'active' and KYC approval.
+  if (user.status === 'blocked' && user.role !== ROLES.PARTNER) {
+    throw new ApiError(HTTP_STATUS.FORBIDDEN, 'Account is blocked. Contact Super Admin.');
+  }
+
+  req.user = user;
+  next();
 });

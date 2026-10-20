@@ -1,7 +1,7 @@
 import { body } from 'express-validator';
 
 export const createGatewayOrderRules = [
-  body('amount').isNumeric().withMessage('Amount must be a positive number'),
+  body('amount').optional().isNumeric().withMessage('Amount must be a positive number'),
   body('bookingId').optional().isMongoId().withMessage('Valid Booking Mongo ID is required'),
   body('type').optional().isIn(['booking_payment', 'wallet_recharge']).withMessage('Invalid payment type'),
 ];
@@ -14,7 +14,7 @@ export const verifyPaymentRules = [
 
 export const walletPayRules = [
   body('bookingId').isMongoId().withMessage('Valid Booking Mongo ID is required'),
-  body('amount').isNumeric().withMessage('Amount must be a positive number'),
+  body('amount').optional().isNumeric(),
 ];
 
 export const refundRules = [

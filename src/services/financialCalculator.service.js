@@ -77,11 +77,20 @@ export class FinancialCalculatorService {
       partnerCommission = Math.round(baseValue * (rule.partnerCommissionValue / 100)) + (rule.partnerCommissionFixed || 0);
     }
 
-    const discVal = Number(discountAmount || 0);
-    const customerPayable = Math.max(0, baseValue + customerPlatformFee - discVal);
+    // A discount can never exceed what the customer would otherwise pay
+    const grossPayable = baseValue + customerPlatformFee;
+    const discVal = Math.min(Math.max(0, Number(discountAmount || 0)), grossPayable);
+    const customerPayable = Math.max(0, grossPayable - discVal);
     const partnerGrossEarning = baseValue;
-    const partnerNetEarning = Math.max(0, partnerGrossEarning - partnerCommission);
-    const norozzGrossRevenue = customerPlatformFee + partnerCommission;
+
+    // Who funds the discount: PARTNER -> partner earns less, SHARED -> 50/50, anything else -> NOROZZ
+    let partnerShare = 0;
+    if (discountBearBy === 'PARTNER') partnerShare = discVal;
+    else if (discountBearBy === 'SHARED') partnerShare = Math.round(discVal / 2);
+    const norozzShare = discVal - partnerShare;
+
+    const partnerNetEarning = Math.max(0, partnerGrossEarning - partnerCommission - partnerShare);
+    const norozzGrossRevenue = customerPlatformFee + partnerCommission - norozzShare;
 
     return {
       servicePrice: Number(servicePrice),

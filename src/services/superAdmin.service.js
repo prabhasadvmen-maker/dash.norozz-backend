@@ -74,22 +74,24 @@ export class SuperAdminService {
     const grossRevenue = await bookingRepository.getGrossRevenue();
 
     // Live Booking Status Breakdown
-    const completedBookingsCount = await bookingRepository.count({ status: { $in: ['completed', 'Completed', 'confirmed', 'Confirmed'] } });
-    const pendingBookingsCount = await bookingRepository.count({ status: { $in: ['pending', 'Pending', 'accepted', 'Accepted', 'In Progress', 'in_progress'] } });
-    const cancelledBookingsCount = await bookingRepository.count({ status: { $in: ['cancelled', 'Cancelled', 'refunded', 'Refunded'] } });
+    const completedBookingsCount = await bookingRepository.count({ status: 'Completed' });
+    const pendingBookingsCount = await bookingRepository.count({ status: { $in: ['Pending', 'Assigned', 'Accepted', 'On The Way', 'Started'] } });
+    const cancelledBookingsCount = await bookingRepository.count({ status: { $in: ['Cancelled', 'Refunded'] } });
 
-    // Financial Ledger Metrics Calculation
-    const grossBookingValue = Number(grossRevenue || 0);
-    const customerPlatformFees = Math.round(grossBookingValue * 0.05); // 5% Customer Platform Fee
-    const partnerCommissions = Math.round(grossBookingValue * 0.20);   // 20% Partner Commission
-    const grossPlatformRevenue = customerPlatformFees + partnerCommissions;
-    const refundsAdjustments = Math.round(grossBookingValue * 0.01);
-    const gatewayCharges = Math.round(grossBookingValue * 0.02);
-    const netPlatformRevenue = Math.max(0, grossPlatformRevenue - refundsAdjustments - gatewayCharges);
+    // Financial figures come from the ledger-backed platform account (no estimated percentages)
+    const { financialEngineService } = await import('./financialEngine.service.js');
+    const fin = await financialEngineService.getFinancialOverview();
+    const grossBookingValue = Number(fin.overview.grossBookingValue || grossRevenue || 0);
+    const customerPlatformFees = fin.overview.customerPlatformFees;
+    const partnerCommissions = fin.overview.partnerCommissions;
+    const grossPlatformRevenue = fin.overview.grossPlatformRevenue;
+    const refundsAdjustments = fin.overview.refunds;
+    const gatewayCharges = fin.overview.gatewayFees;
+    const netPlatformRevenue = fin.overview.netPlatformRevenue;
 
     const recentBookings = await bookingRepository.findRecent(5);
-    const recentPartners = await userRepository.find({ role: ROLES.PARTNER }, '-password', { createdAt: -1 });
-    const recentCustomers = await userRepository.find({ role: ROLES.CUSTOMER }, '-password', { createdAt: -1 });
+    const recentPartners = await User.find({ role: ROLES.PARTNER }).select('-password').sort({ createdAt: -1 }).limit(5).lean();
+    const recentCustomers = await User.find({ role: ROLES.CUSTOMER }).select('-password').sort({ createdAt: -1 }).limit(5).lean();
 
     const populatedPartners = await this.populateCityNames(recentPartners);
     const populatedCustomers = await this.populateCityNames(recentCustomers);

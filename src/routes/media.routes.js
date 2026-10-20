@@ -1,5 +1,11 @@
 import { Router } from 'express';
 import { r2StorageService } from '../services/r2Storage.service.js';
+import { verifyJWT } from '../middleware/auth.middleware.js';
+import { authorizeRoles } from '../middleware/role.middleware.js';
+import { ROLES } from '../constants/roles.constant.js';
+
+const ALLOWED_UPLOAD_FOLDERS = ['banners', 'services', 'categories', 'uploads'];
+const ALLOWED_MIME = /^(image\/(png|jpe?g|webp|gif|svg\+xml)|video\/(mp4|webm)|application\/pdf)$/;
 
 const router = Router();
 
@@ -7,13 +13,17 @@ const router = Router();
  * Generate Presigned URL for Upload
  * POST /api/media/presigned-url
  */
-router.post('/presigned-url', async (req, res) => {
+router.post('/presigned-url', verifyJWT, authorizeRoles(ROLES.SUPER_ADMIN, ROLES.ADMIN), async (req, res) => {
   try {
     const { fileName, mimeType, folder } = req.body;
     if (!fileName || !mimeType) {
       return res.status(400).json({ success: false, message: 'fileName and mimeType are required' });
     }
-    const result = await r2StorageService.getPresignedUrl(fileName, mimeType, folder || 'banners');
+    if (!ALLOWED_MIME.test(String(mimeType))) {
+      return res.status(400).json({ success: false, message: 'File type is not allowed' });
+    }
+    const safeFolder = ALLOWED_UPLOAD_FOLDERS.includes(folder) ? folder : 'banners';
+    const result = await r2StorageService.getPresignedUrl(String(fileName).slice(0, 120), mimeType, safeFolder);
     res.json({ success: true, data: result });
   } catch (error) {
     console.error('Presigned URL Error:', error);
@@ -37,6 +47,10 @@ router.get('/*', async (req, res) => {
     const bucketName = process.env.R2_BUCKET || 'advmenngo';
     if (key.startsWith(`${bucketName}/`)) {
       key = key.substring(bucketName.length + 1);
+    }
+
+    if (key.includes('..')) {
+      return res.status(400).json({ error: 'Invalid media key' });
     }
 
     const s3Object = await r2StorageService.getFileObject(key);

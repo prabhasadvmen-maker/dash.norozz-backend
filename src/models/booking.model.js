@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import mongoose from 'mongoose';
 
 const bookingSchema = new mongoose.Schema(
@@ -180,11 +181,63 @@ const bookingSchema = new mongoose.Schema(
       enum: ['customer', 'partner', 'admin', 'system', ''],
       default: '',
     },
+    // select:false => never leaks via partner/admin list endpoints; customer endpoints opt in with .select('+completionOtp')
     completionOtp: {
       type: String,
-      default: () => Math.floor(1000 + Math.random() * 9000).toString(),
+      default: () => String(crypto.randomInt(1000, 10000)),
+      select: false,
     },
     otpVerified: {
+      type: Boolean,
+      default: false,
+    },
+    otpFailedAttempts: {
+      type: Number,
+      default: 0,
+    },
+    // Amount the customer actually paid up-front (held in escrow). Extras are collected by the partner on site.
+    prepaidAmount: {
+      type: Number,
+      default: 0,
+    },
+    // Breakdown computed at booking creation (base service only, before any extras)
+    baseFinancialSnapshot: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
+    couponCode: {
+      type: String,
+      default: '',
+    },
+    extraPaymentMethod: {
+      type: String,
+      default: '',
+    },
+    refundAmount: {
+      type: Number,
+      default: 0,
+    },
+    paymentConfirmedAt: {
+      type: Date,
+      default: null,
+    },
+    cancelledAt: {
+      type: Date,
+      default: null,
+    },
+    autoAssignAttemptedAt: {
+      type: Date,
+      default: null,
+    },
+    assignedAt: {
+      type: Date,
+      default: null,
+    },
+    reassignCount: {
+      type: Number,
+      default: 0,
+    },
+    starterPackApplied: {
       type: Boolean,
       default: false,
     },

@@ -14,9 +14,24 @@ export const isRealZoopConfigured = () => {
   );
 };
 
+/**
+ * KYC simulation (auto-"verify") exists for local development only.
+ * In production it is NEVER allowed: a missing/failed KYC provider must fail closed, not approve people.
+ */
+export const isKycSimulationAllowed = () => process.env.NODE_ENV !== 'production';
+
+export const assertKycProviderAvailable = () => {
+  if (!isRealZoopConfigured() && !isKycSimulationAllowed()) {
+    const err = new Error('Automated KYC verification is temporarily unavailable. Please try again later.');
+    err.statusCode = 503;
+    throw err;
+  }
+};
+
 export class ZoopClient {
   static async post(endpoint, data = {}, customHeaders = {}) {
     if (!isRealZoopConfigured()) {
+      assertKycProviderAvailable();
       console.log(`[ZOOP Client Simulation] Invoked ${endpoint}`);
       return { isSimulation: true, endpoint, requestData: data };
     }

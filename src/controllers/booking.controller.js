@@ -10,12 +10,12 @@ export class BookingController extends BaseController {
   });
 
   processPayment = asyncHandler(async (req, res) => {
-    const result = await bookingService.processPayment(req.params.id, req.body.paymentMethod);
+    const result = await bookingService.processPayment(req.params.id, req.user, req.body.paymentMethod);
     return this.sendSuccess(res, result, result.message);
   });
 
   assignPartner = asyncHandler(async (req, res) => {
-    const result = await bookingService.assignPartner(req.params.id, req.body.partnerId);
+    const result = await bookingService.assignPartner(req.params.id, req.body.partnerId, req.user);
     return this.sendSuccess(res, result, result.message);
   });
 
@@ -35,8 +35,7 @@ export class BookingController extends BaseController {
   });
 
   completeBooking = asyncHandler(async (req, res) => {
-    const { paymentMethod } = req.body || {};
-    const result = await bookingService.completeBooking(req.params.id, req.user, paymentMethod);
+    const result = await bookingService.completeBooking(req.params.id, req.user);
     return this.sendSuccess(res, result, result.message);
   });
 
@@ -58,12 +57,12 @@ export class BookingController extends BaseController {
   });
 
   getBookingById = asyncHandler(async (req, res) => {
-    const booking = await bookingService.getBookingById(req.params.id);
+    const booking = await bookingService.getBookingById(req.params.id, req.user);
     return this.sendSuccess(res, booking, 'Booking details retrieved successfully');
   });
 
   getPartnerPublicProfile = asyncHandler(async (req, res) => {
-    const profile = await bookingService.getPartnerPublicProfile(req.params.partnerId);
+    const profile = await bookingService.getPartnerPublicProfile(req.params.partnerId, req.user);
     return this.sendSuccess(res, profile, 'Partner public profile retrieved successfully');
   });
 
@@ -78,12 +77,12 @@ export class BookingController extends BaseController {
   });
 
   calculatePayableAmount = asyncHandler(async (req, res) => {
-    const result = await bookingService.calculatePayableAmount(req.params.id);
+    const result = await bookingService.calculatePayableAmount(req.params.id, req.user);
     return this.sendSuccess(res, result, 'Payable amount calculated successfully');
   });
 
   verifyExtraPayment = asyncHandler(async (req, res) => {
-    const result = await bookingService.verifyExtraPayment(req.params.id, req.body);
+    const result = await bookingService.verifyExtraPayment(req.params.id, req.user, req.body);
     return this.sendSuccess(res, result, result.message);
   });
 }

@@ -2,89 +2,124 @@ import { Server } from 'socket.io';
 import { userRepository } from '../repositories/user.repository.js';
 import { bookingRepository } from '../repositories/booking.repository.js';
 import { ChatMessage } from '../models/chat.model.js';
+import { User } from '../models/user.model.js';
 import { ROLES } from '../constants/roles.constant.js';
-import { isWithinOperatingRadius } from '../utils/distance.util.js';
+import { verifyAccessToken } from '../helpers/jwt.helper.js';
+import { isPartnerEligibleForBooking } from '../utils/partnerEligibility.js';
 
 let io = null;
 
-// Store partner sockets: partnerId -> Set of socketIds
+// partnerId -> Set of socketIds
 const partnerSocketsMap = new Map();
+
+const ADMIN_ROLES = [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.CITY_ADMIN];
+const MAX_CHAT_LENGTH = 1000;
+const isObjectId = (v) => /^[0-9a-fA-F]{24}$/.test(String(v || ''));
+
+const getAllowedOrigins = () =>
+  [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:3000',
+    'https://norozz.in',
+    'https://www.norozz.in',
+    'https://api.norozz.in',
+    ...(process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim()) : []),
+  ].filter(Boolean);
+
+/**
+ * Returns the booking if (and only if) the given user may participate in its realtime channels.
+ */
+const getAccessibleBooking = async (user, bookingId) => {
+  if (!user || !isObjectId(bookingId)) return null;
+  const booking = await bookingRepository.model.findById(bookingId).select('customer partner status bookingId');
+  if (!booking) return null;
+  const uid = String(user._id);
+  if (String(booking.customer) === uid) return { booking, role: 'customer' };
+  if (booking.partner && String(booking.partner) === uid) return { booking, role: 'partner' };
+  if (ADMIN_ROLES.includes(user.role)) return { booking, role: 'admin' };
+  return null;
+};
 
 /**
  * Initialize Socket.io Server
- * @param {Object} httpServer Node.js HTTP Server instance
  */
 export const initSockets = (httpServer) => {
+  const allowedOrigins = getAllowedOrigins();
+
   io = new Server(httpServer, {
     cors: {
-      origin: '*',
-      methods: ['GET', 'POST', 'PUT', 'DELETE'],
+      origin: (origin, cb) => {
+        if (!origin || process.env.NODE_ENV !== 'production' || allowedOrigins.includes(origin)) return cb(null, true);
+        return cb(new Error('Origin not allowed by CORS'));
+      },
+      methods: ['GET', 'POST'],
+      credentials: true,
     },
     transports: ['websocket', 'polling'],
+    maxHttpBufferSize: 1e6,
+  });
+
+  // ─── Authentication: every socket must present a valid access token ───────────────
+  io.use(async (socket, next) => {
+    try {
+      const token =
+        socket.handshake.auth?.token ||
+        socket.handshake.headers?.authorization?.replace('Bearer ', '');
+      if (!token) return next(new Error('Unauthorized: token missing'));
+
+      const decoded = verifyAccessToken(token);
+      const user = await User.findById(decoded.id).select('name role status kycStatus');
+      if (!user || user.status === 'deleted') return next(new Error('Unauthorized: invalid user'));
+
+      socket.user = user;
+      return next();
+    } catch {
+      return next(new Error('Unauthorized: invalid or expired token'));
+    }
   });
 
   console.log('⚡ Socket.io Real-Time Dispatcher Server Initialized');
 
   io.on('connection', (socket) => {
-    console.log(`🔌 Client connected to Socket.io: ${socket.id}`);
+    const authUser = socket.user;
+    const authUserId = String(authUser._id);
 
-    // 1. PARTNER JOIN ROOM
+    // Every authenticated socket is placed in its own private room
+    socket.join(`user_${authUserId}`);
+    if (authUser.role === ROLES.CUSTOMER) socket.join(`customer_${authUserId}`);
+
+    // 1. PARTNER JOIN ROOM (identity comes from the verified token, never from the client payload)
     socket.on('join_partner', async (data) => {
       try {
-        const { partnerId, category, city } = data || {};
-        if (!partnerId) return;
+        if (authUser.role !== ROLES.PARTNER) return;
 
-        // Verify partner status in Database before joining job dispatch rooms
-        const partner = await userRepository.findById(partnerId);
-        if (!partner || partner.role !== ROLES.PARTNER || partner.status !== 'active' || partner.kycStatus !== 'approved') {
-          console.log(`⛔ Socket join_partner rejected for Partner ${partnerId}: Account is ${partner?.status || 'not active'} or KYC not approved`);
+        const partner = await userRepository.findById(authUserId);
+        if (!partner || partner.status !== 'active' || partner.kycStatus !== 'approved') {
           return socket.emit('partner_connected', {
             success: false,
             message: `Account is ${partner?.status || 'inactive'}. Please contact City Admin to activate your account.`,
-            partnerId,
+            partnerId: authUserId,
             status: partner?.status || 'disabled',
           });
         }
 
-        socket.partnerId = partnerId;
-        socket.partnerCategory = category || '';
-        socket.partnerCity = city || 'Delhi NCR';
-
-        // BUG 1 FIX: Mark partner as online in MongoDB so dispatchNewJobOffer() can find them
-        await userRepository.model.findByIdAndUpdate(partnerId, {
-          isOnline: true,
-          isAvailable: true,
-          lastSeenAt: new Date(),
-        });
-
-        // Join individual partner room
-        const partnerRoom = `partner_${partnerId}`;
-        socket.join(partnerRoom);
-
-        // Join Category & City Room (e.g. category_Beauty & Salon_Jaunpur)
-        const catStr = typeof category === 'object' ? (category?.name || category?._id || '') : String(category || '');
-        const cityStr = String(city || 'Jaunpur').trim();
-        if (catStr && catStr.trim()) {
-          const categoryRoom = `category_${catStr.trim()}_${cityStr}`;
-          socket.join(categoryRoom);
-          console.log(`👤 Partner ${partnerId} joined category room: [${categoryRoom}]`);
-        }
-
-        // Join All Online Partners Room
+        socket.partnerId = authUserId;
+        socket.join(`partner_${authUserId}`);
         socket.join('all_online_partners');
 
-        // Track partner socket ID
-        if (!partnerSocketsMap.has(partnerId)) {
-          partnerSocketsMap.set(partnerId, new Set());
-        }
-        partnerSocketsMap.get(partnerId).add(socket.id);
+        if (!partnerSocketsMap.has(authUserId)) partnerSocketsMap.set(authUserId, new Set());
+        partnerSocketsMap.get(authUserId).add(socket.id);
 
-        console.log(`✅ Partner [${partner.name}] (${partnerId}) is now ONLINE in DB and joined socket rooms.`);
+        // The client reports the partner's own online/offline toggle; a plain connect never forces them online.
+        const presence = { lastSeenAt: new Date() };
+        if (typeof data?.online === 'boolean') presence.isOnline = data.online;
+        await userRepository.model.findByIdAndUpdate(authUserId, presence);
 
         socket.emit('partner_connected', {
           success: true,
           message: 'Connected to real-time job dispatch network',
-          partnerId,
+          partnerId: authUserId,
         });
       } catch (err) {
         console.error('Error in join_partner socket handler:', err);
@@ -92,315 +127,211 @@ export const initSockets = (httpServer) => {
     });
 
     // 1a. CUSTOMER / USER JOIN ROOM
-    socket.on('join_user', async (data) => {
-      try {
-        const { userId } = data || {};
-        if (!userId) return;
-
-        socket.userId = userId;
-        const userRoom = `user_${userId}`;
-        const customerRoom = `customer_${userId}`;
-        socket.join(userRoom);
-        socket.join(customerRoom);
-
-        console.log(`👤 Customer/User ${userId} joined socket room: [${userRoom}] & [${customerRoom}]`);
-        socket.emit('user_connected', { success: true, userId });
-      } catch (err) {
-        console.error('Error in join_user socket handler:', err);
-      }
+    socket.on('join_user', () => {
+      socket.emit('user_connected', { success: true, userId: authUserId });
     });
 
-    // 1b. JOIN BOOKING CHAT ROOM
-    socket.on('join_chat_room', (data) => {
+    // 1b. JOIN BOOKING CHAT ROOM (participants only)
+    socket.on('join_chat_room', async (data) => {
       try {
         const { bookingId } = data || {};
-        if (!bookingId) return;
+        const access = await getAccessibleBooking(authUser, bookingId);
+        if (!access) return socket.emit('chat_room_joined', { success: false, bookingId, message: 'Not allowed' });
 
         const chatRoom = `chat_booking_${bookingId}`;
         socket.join(chatRoom);
-        console.log(`💬 Socket ${socket.id} joined chat room: [${chatRoom}]`);
-
         socket.emit('chat_room_joined', { success: true, bookingId, room: chatRoom });
       } catch (err) {
         console.error('Error in join_chat_room socket handler:', err);
       }
     });
 
-    // 1c. SEND REAL-TIME CHAT MESSAGE
+    // 1c. SEND REAL-TIME CHAT MESSAGE (sender identity from the token)
     socket.on('send_chat_message', async (data) => {
       try {
-        const { bookingId, senderId, senderName, senderRole, message } = data || {};
-        if (!bookingId || !senderId || !message) return;
+        const { bookingId, message } = data || {};
+        const trimmedMsg = String(message || '').trim().slice(0, MAX_CHAT_LENGTH);
+        if (!bookingId || !trimmedMsg) return;
 
-        const trimmedMsg = String(message).trim();
-        if (!trimmedMsg) return;
+        const access = await getAccessibleBooking(authUser, bookingId);
+        if (!access || access.role === 'admin') return;
+        const { booking, role } = access;
 
-        // Save message to MongoDB
         const chatMsg = await ChatMessage.create({
           booking: String(bookingId),
           bookingRef: String(bookingId),
-          sender: String(senderId),
-          senderName: senderName || 'User',
-          senderRole: senderRole || 'customer',
+          sender: authUserId,
+          senderName: authUser.name || 'User',
+          senderRole: role,
           message: trimmedMsg,
           timestamp: new Date(),
         });
 
-        const chatRoom = `chat_booking_${bookingId}`;
-        console.log(`💬 Broadcasting chat msg in [${chatRoom}] from ${senderName} (${senderRole}): ${trimmedMsg}`);
-
         const msgPayload = {
           _id: chatMsg._id,
           booking: String(bookingId),
-          sender: String(senderId),
-          senderName: senderName || 'User',
-          senderRole: senderRole || 'customer',
+          sender: authUserId,
+          senderName: authUser.name || 'User',
+          senderRole: role,
           message: trimmedMsg,
           timestamp: chatMsg.timestamp,
         };
 
-        // Broadcast to all sockets in the chat room
-        io.to(chatRoom).emit('new_chat_message', msgPayload);
-
-        // Target customer & partner user rooms directly so background socket listeners receive the message
-        try {
-          const bookingObj = await bookingRepository.model.findById(bookingId).select('customer partner');
-          if (bookingObj) {
-            if (bookingObj.customer) {
-              const custIdStr = bookingObj.customer.toString();
-              io.to(`user_${custIdStr}`).to(`customer_${custIdStr}`).emit('new_chat_message', msgPayload);
-            }
-            if (bookingObj.partner) {
-              const partnerIdStr = bookingObj.partner.toString();
-              io.to(`partner_${partnerIdStr}`).to(`user_${partnerIdStr}`).emit('new_chat_message', msgPayload);
-            }
-          }
-        } catch (e) {
-          console.warn('Could not fetch booking customer/partner for direct room emit:', e);
-        }
-
-        // Also broadcast global chat notification event for sound & toast alerts across app
-        io.emit('new_chat_notification', msgPayload);
+        // Only the two participants ever receive the message
+        const rooms = [`chat_booking_${bookingId}`, `user_${String(booking.customer)}`];
+        if (booking.partner) rooms.push(`user_${String(booking.partner)}`);
+        io.to(rooms).emit('new_chat_message', msgPayload);
+        io.to(rooms.slice(1)).emit('new_chat_notification', msgPayload);
       } catch (err) {
         console.error('Error in send_chat_message socket handler:', err);
       }
     });
 
-    // 2. ATOMIC FIRST-COME, FIRST-SERVED JOB CLAIM VIA SOCKET
+    // 2. ATOMIC FIRST-COME, FIRST-SERVED JOB CLAIM (shared logic with the REST endpoint)
     socket.on('claim_job', async (data) => {
       try {
-        const { bookingId, partnerId } = data || {};
-        if (!bookingId || !partnerId) {
+        const { bookingId } = data || {};
+        if (!isObjectId(bookingId)) {
           return socket.emit('claim_result', { success: false, message: 'Invalid claim data' });
         }
-
-        const partner = await userRepository.findById(partnerId);
-        // BUG 8 FIX: Removed strict !partner.isOnline check — a partner actively connected and clicking
-        // should always be able to claim, even if DB update hasn't propagated yet.
-        if (!partner || partner.role !== ROLES.PARTNER || partner.kycStatus !== 'approved' || partner.status !== 'active') {
-          return socket.emit('claim_result', {
-            success: false,
-            message: 'Only active approved partners can claim booking requests.',
-          });
-        }
-
-        // Atomic Mongoose lock: only update if status is still Pending
-        const updatedBooking = await bookingRepository.model.findOneAndUpdate(
-          {
-            _id: bookingId,
-            status: { $in: ['Pending', 'pending'] },
-          },
-          {
-            $set: {
-              partner: partner._id,
-              status: 'Accepted',
-            },
-          },
-          { new: true }
-        ).populate('customer', 'name phone email')
-         .populate('service', 'name price duration')
-         .populate('category', 'name');
-
-        if (!updatedBooking) {
-          // Job was already claimed by another partner or cancelled
-          return socket.emit('claim_result', {
-            success: false,
-            message: '⚡ Job already claimed by another technician!',
-            bookingId,
-          });
-        }
-
-        // SUCCESS: First partner claimed the job!
-        console.log(`🎉 Job [${bookingId}] successfully claimed by Partner [${partner.name}]`);
-
-        // Notify claiming partner
-        socket.emit('claim_result', {
-          success: true,
-          message: '🎉 Congratulations! Booking successfully assigned to you.',
-          booking: updatedBooking,
-        });
-
-        // Broadcast to all other partners to dismiss incoming job offer
-        const categoryName = typeof updatedBooking.category === 'object' ? (updatedBooking.category?.name || '') : String(updatedBooking.category || partner.category || '');
-        const rawPartnerCity = partner.assignedCity?.name || (typeof partner.assignedCity === 'string' ? partner.assignedCity : null) || partner.city || 'Jaunpur';
-        const bookingCity = String(updatedBooking.city || rawPartnerCity || 'Jaunpur').trim();
-        const categoryRoom = `category_${String(categoryName).trim()}_${bookingCity}`;
-
-        io.to(categoryRoom).to('all_online_partners').emit('job_claimed', {
-          bookingId,
-          claimedByPartnerId: partner._id,
-          claimedByPartnerName: partner.name,
-          message: `Booking ${updatedBooking.bookingId || bookingId} claimed by another technician.`,
-        });
-
-        // Notify customer socket if online
-        io.to(`customer_${updatedBooking.customer?._id}`).emit('partner_assigned', {
-          booking: updatedBooking,
-          partner: {
-            id: partner._id,
-            name: partner.name,
-            phone: partner.phone,
-            category: partner.category,
-          },
-        });
+        const { bookingService } = await import('../services/booking.service.js');
+        const partner = await userRepository.findById(authUserId);
+        const result = await bookingService.claimJobOffer(bookingId, partner);
+        socket.emit('claim_result', { success: true, message: result.message, booking: result.booking });
       } catch (err) {
-        console.error('Error handling claim_job socket event:', err);
-        socket.emit('claim_result', { success: false, message: 'Server error claiming job request.' });
+        socket.emit('claim_result', {
+          success: false,
+          message: err?.statusCode ? err.message : 'Server error claiming job request.',
+          bookingId: data?.bookingId,
+        });
       }
     });
 
-    // 3. WEBRTC VOICE CALL SIGNALING HANDLERS
-    socket.on('voice:call:initiate', (data, ack) => {
+    // 2b. LIVE PARTNER LOCATION -> customer (only the assigned partner, only while travelling to the job)
+    const lastLocationAt = new Map();
+    socket.on('partner_location', async (data) => {
       try {
-        const { conversationId, bookingId, targetUserId, callerName, callerRole } = data || {};
-        const roomKey = conversationId || bookingId;
-        if (!roomKey) return;
+        if (authUser.role !== ROLES.PARTNER) return;
+        const { bookingId } = data || {};
+        const lat = Number(data?.lat);
+        const lng = Number(data?.lng);
+        if (!isObjectId(bookingId) || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return;
 
-        console.log(`📞 Voice call initiated for [${roomKey}] by ${callerName} (${callerRole})`);
+        const now = Date.now();
+        if (now - (lastLocationAt.get(bookingId) || 0) < 3000) return; // throttle
+        lastLocationAt.set(bookingId, now);
+
+        const booking = await bookingRepository.model.findOne({
+          _id: bookingId,
+          partner: authUserId,
+          status: { $in: ['Accepted', 'On The Way'] },
+        }).select('customer');
+        if (!booking) return;
+
+        io.to(`user_${String(booking.customer)}`).emit('partner_location_update', { bookingId, lat, lng, at: new Date() });
+        await userRepository.model.findByIdAndUpdate(authUserId, { 'locationCoordinates.lat': lat, 'locationCoordinates.lng': lng });
+      } catch (err) {
+        console.error('Error in partner_location handler:', err.message);
+      }
+    });
+
+    // 3. WEBRTC VOICE CALL SIGNALING (participants of the booking only)
+    const voiceRoom = async (data) => {
+      const roomKey = data?.conversationId || data?.bookingId;
+      const access = await getAccessibleBooking(authUser, roomKey);
+      if (!access) return null;
+      return { roomKey, ...access };
+    };
+
+    socket.on('voice:call:initiate', async (data, ack) => {
+      try {
+        const ctx = await voiceRoom(data);
+        if (!ctx) return typeof ack === 'function' && ack({ success: false, error: 'Not allowed' });
 
         const incomingPayload = {
-          conversationId: roomKey,
-          bookingId: roomKey,
+          conversationId: ctx.roomKey,
+          bookingId: ctx.roomKey,
           fromSocketId: socket.id,
-          callerName: callerName || 'Norozz User',
-          callerRole: callerRole || 'customer',
-          startedAt: new Date()
+          callerName: authUser.name || 'Norozz User',
+          callerRole: ctx.role,
+          startedAt: new Date(),
         };
 
-        if (targetUserId) {
-          io.to(`user_${targetUserId}`).to(`customer_${targetUserId}`).to(`partner_${targetUserId}`).emit('voice:call:incoming', incomingPayload);
-        }
-
-        // Also broadcast to chat room
-        socket.to(`chat_booking_${roomKey}`).emit('voice:call:incoming', incomingPayload);
+        const { booking } = ctx;
+        const other = ctx.role === 'customer' ? booking.partner : booking.customer;
+        if (other) io.to(`user_${String(other)}`).emit('voice:call:incoming', incomingPayload);
+        socket.to(`chat_booking_${ctx.roomKey}`).emit('voice:call:incoming', incomingPayload);
 
         if (typeof ack === 'function') ack({ success: true, message: 'Call ringing...' });
       } catch (err) {
-        console.error('Error in voice:call:initiate:', err);
         if (typeof ack === 'function') ack({ success: false, error: err.message });
       }
     });
 
-    socket.on('voice:call:accept', (data, ack) => {
-      try {
-        const { conversationId, bookingId, calleeName } = data || {};
-        const roomKey = conversationId || bookingId;
+    const relayVoiceEvent = (eventName, buildPayload) => {
+      socket.on(eventName, async (data, ack) => {
+        try {
+          const ctx = await voiceRoom(data);
+          if (!ctx) return typeof ack === 'function' && ack({ success: false });
+          const payload = buildPayload(ctx, data);
+          const room = `chat_booking_${ctx.roomKey}`;
+          const suffix = eventName.replace('voice:call:', '');
+          const outName = { accept: 'accepted', reject: 'rejected', end: 'ended' }[suffix];
+          socket.to(room).emit(`voice:call:${outName}`, payload);
+          socket.to(room).emit(`voice:call:${outName}:${ctx.roomKey}`, payload);
+          if (typeof ack === 'function') ack({ success: true });
+        } catch (err) {
+          console.error(`Error in ${eventName}:`, err);
+        }
+      });
+    };
 
-        console.log(`✅ Voice call accepted for [${roomKey}] by ${calleeName || 'callee'}`);
+    relayVoiceEvent('voice:call:accept', (ctx) => ({
+      conversationId: ctx.roomKey,
+      bookingId: ctx.roomKey,
+      acceptedBySocketId: socket.id,
+      acceptedAt: new Date(),
+    }));
+    relayVoiceEvent('voice:call:reject', (ctx, d) => ({
+      conversationId: ctx.roomKey,
+      bookingId: ctx.roomKey,
+      reason: String(d?.reason || 'User busy').slice(0, 100),
+    }));
+    relayVoiceEvent('voice:call:end', (ctx) => ({
+      conversationId: ctx.roomKey,
+      bookingId: ctx.roomKey,
+      endedBySocketId: socket.id,
+      endedAt: new Date(),
+    }));
 
-        const acceptedPayload = {
-          conversationId: roomKey,
-          bookingId: roomKey,
-          acceptedBySocketId: socket.id,
-          acceptedAt: new Date()
-        };
-
-        socket.to(`chat_booking_${roomKey}`).emit('voice:call:accepted', acceptedPayload);
-        io.emit(`voice:call:accepted:${roomKey}`, acceptedPayload);
-
-        if (typeof ack === 'function') ack({ success: true });
-      } catch (err) {
-        console.error('Error in voice:call:accept:', err);
-      }
-    });
-
-    socket.on('voice:call:reject', (data, ack) => {
-      try {
-        const { conversationId, bookingId, reason } = data || {};
-        const roomKey = conversationId || bookingId;
-
-        console.log(`❌ Voice call rejected for [${roomKey}]`);
-
-        const rejectedPayload = {
-          conversationId: roomKey,
-          bookingId: roomKey,
-          reason: reason || 'User busy'
-        };
-
-        socket.to(`chat_booking_${roomKey}`).emit('voice:call:rejected', rejectedPayload);
-        io.emit(`voice:call:rejected:${roomKey}`, rejectedPayload);
-
-        if (typeof ack === 'function') ack({ success: true });
-      } catch (err) {
-        console.error('Error in voice:call:reject:', err);
-      }
-    });
-
-    socket.on('voice:call:end', (data, ack) => {
-      try {
-        const { conversationId, bookingId } = data || {};
-        const roomKey = conversationId || bookingId;
-
-        console.log(`📴 Voice call ended for [${roomKey}]`);
-
-        const endedPayload = {
-          conversationId: roomKey,
-          bookingId: roomKey,
-          endedBySocketId: socket.id,
-          endedAt: new Date()
-        };
-
-        socket.to(`chat_booking_${roomKey}`).emit('voice:call:ended', endedPayload);
-        io.emit(`voice:call:ended:${roomKey}`, endedPayload);
-
-        if (typeof ack === 'function') ack({ success: true });
-      } catch (err) {
-        console.error('Error in voice:call:end:', err);
-      }
-    });
-
-    socket.on('voice:signal', (data) => {
-      try {
-        const { conversationId, bookingId, signal } = data || {};
-        const roomKey = conversationId || bookingId;
-        if (!roomKey || !signal) return;
-
-        socket.to(`chat_booking_${roomKey}`).emit('voice:signal', {
-          conversationId: roomKey,
-          bookingId: roomKey,
-          senderSocketId: socket.id,
-          signal
-        });
-      } catch (err) {
-        console.error('Error in voice:signal relay:', err);
-      }
-    });
+    const relaySignal = (eventName) => {
+      socket.on(eventName, async (data) => {
+        try {
+          const ctx = await voiceRoom(data);
+          if (!ctx) return;
+          socket.to(`chat_booking_${ctx.roomKey}`).emit(eventName, {
+            conversationId: ctx.roomKey,
+            bookingId: ctx.roomKey,
+            senderSocketId: socket.id,
+            ...(data?.signal ? { signal: data.signal } : {}),
+          });
+        } catch (err) {
+          console.error(`Error in ${eventName} relay:`, err);
+        }
+      });
+    };
+    relaySignal('voice:signal');
+    relaySignal('voice:signal:ready');
 
     // 4. DISCONNECT HANDLER
     socket.on('disconnect', async () => {
-      console.log(`🔌 Client disconnected: ${socket.id}`);
       if (socket.partnerId && partnerSocketsMap.has(socket.partnerId)) {
         const socketSet = partnerSocketsMap.get(socket.partnerId);
         socketSet.delete(socket.id);
         if (socketSet.size === 0) {
-          // BUG 1 FIX: Mark partner as offline in MongoDB when ALL their sockets disconnect
           partnerSocketsMap.delete(socket.partnerId);
           try {
-            await userRepository.model.findByIdAndUpdate(socket.partnerId, {
-              isOnline: false,
-              lastSeenAt: new Date(),
-            });
-            console.log(`🔴 Partner [${socket.partnerId}] marked OFFLINE in DB (all sockets disconnected).`);
+            await userRepository.model.findByIdAndUpdate(socket.partnerId, { isOnline: false, lastSeenAt: new Date() });
           } catch (e) {
             console.warn('Failed to mark partner offline on disconnect:', e.message);
           }
@@ -413,95 +344,63 @@ export const initSockets = (httpServer) => {
 };
 
 /**
- * Helper: Broadcast real-time job offer to eligible partners
- * Filters by Category, Online status, and Work Radius / Location
- * @param {Object} booking Populated Mongoose booking object
+ * Realtime helpers used by services
+ */
+export const emitToUser = (userId, event, payload) => {
+  if (!io || !userId) return;
+  io.to(`user_${String(userId._id || userId)}`).emit(event, payload);
+};
+
+export const emitToAllPartners = (event, payload) => {
+  if (!io) return;
+  io.to('all_online_partners').emit(event, payload);
+};
+
+/**
+ * Tell both parties of a booking that its state changed (frontends refetch / merge on this event).
+ */
+export const notifyBookingUpdate = (booking, extra = {}) => {
+  if (!io || !booking) return;
+  const payload = {
+    bookingId: String(booking._id),
+    bookingNumber: booking.bookingId,
+    status: booking.status,
+    paymentStatus: booking.paymentStatus,
+    ...extra,
+  };
+  const customerId = booking.customer?._id || booking.customer;
+  const partnerId = booking.partner?._id || booking.partner;
+  if (customerId) io.to(`user_${String(customerId)}`).emit('booking_updated', payload);
+  if (partnerId) io.to(`user_${String(partnerId)}`).emit('booking_updated', payload);
+};
+
+/**
+ * Broadcast real-time job offer to eligible online partners
+ * (category + services + GPS radius / city, via the shared eligibility rules)
  */
 export const dispatchNewJobOffer = async (booking) => {
   if (!io) {
     console.warn('Socket.io server not initialized yet. Skipping real-time dispatch broadcast.');
-    return;
+    return [];
   }
 
   try {
-    const categoryObj = typeof booking.category === 'object' ? booking.category : null;
-    const categoryId = categoryObj?._id ? String(categoryObj._id) : String(booking.category || '');
+    const categoryObj = typeof booking.category === 'object' && booking.category?.name ? booking.category : null;
+    const categoryId = booking.category?._id ? String(booking.category._id) : String(booking.category || '');
     const categoryName = categoryObj?.name || 'Home Services';
 
-    const serviceObj = typeof booking.service === 'object' ? booking.service : null;
-    const serviceId = serviceObj?._id ? String(serviceObj._id) : String(booking.service || '');
+    const serviceObj = typeof booking.service === 'object' && booking.service?.name ? booking.service : null;
+    const serviceId = booking.service?._id ? String(booking.service._id) : String(booking.service || '');
     const serviceName = serviceObj?.name || booking.packageName || 'Service Request';
 
-    const bookingCity = booking.city || booking.address?.city || 'Jaunpur';
+    const bookingCity = booking.city || booking.address?.city || '';
     const addressLine = booking.address?.addressLine || `${bookingCity} Operational Area`;
 
-    // Fetch all active online partners
-    const partners = await userRepository.find({
-      role: ROLES.PARTNER,
-      status: 'active',
-      isOnline: true,
-    });
+    const partners = await userRepository.model
+      .find({ role: ROLES.PARTNER, status: 'active', kycStatus: 'approved', isOnline: true })
+      .populate('assignedCity', 'name');
 
-    // Filter partners based on offeredServices, Category, KYC Approval, and Work Area City
-    const eligiblePartners = partners.filter((partner) => {
-      // 0. KYC Approval and Online Check
-      if (!partner.isOnline || partner.kycStatus !== 'approved') return false;
-
-      // 0a. Exclude partners who previously cancelled/declined this booking
-      const excludedPartnerIds = Array.isArray(booking.cancelledByPartners)
-        ? booking.cancelledByPartners.map((p) => String(p._id || p))
-        : [];
-      if (excludedPartnerIds.includes(String(partner._id))) {
-        console.log(`⛔ Skipping partner [${partner.name}] for booking [${booking.bookingId || booking._id}]: Partner previously cancelled this booking.`);
-        return false;
-      }
-
-      // 1. Category check
-      const partnerCatId = partner.category?._id ? String(partner.category._id) : String(partner.category || '');
-      const partnerCats = Array.isArray(partner.categories) ? partner.categories.map((c) => String(c._id || c)) : [];
-      const isCatMatch = partnerCatId === categoryId || partnerCats.includes(categoryId) || !categoryId;
-
-      if (!isCatMatch) return false;
-
-      // 2. Offered Services check: If partner selected specific offeredServices, verify serviceId is present
-      if (Array.isArray(partner.offeredServices) && partner.offeredServices.length > 0 && serviceId) {
-        const pServices = partner.offeredServices.map((s) => String(s._id || s));
-        const isSvcMatch = pServices.includes(serviceId);
-        if (!isSvcMatch) return false;
-      }
-
-      // 3. Geographic Operating Radius Match (locationCoordinates distance <= serviceRadius KM)
-      const partnerCoords = partner.locationCoordinates || partner.location;
-      const bookingCoords = booking.address?.locationCoordinates || booking.locationCoordinates;
-      const partnerRadius = partner.serviceRadius || partner.workRadius || partner.operatingRadius || 8;
-
-      // BUG 4 FIX: If either side has no valid coordinates, skip distance filter and include the partner.
-      // Partners/bookings without GPS data should not be silently excluded.
-      const hasPartnerCoords = partnerCoords &&
-        (partnerCoords.lat || partnerCoords.latitude) &&
-        (partnerCoords.lng || partnerCoords.longitude) &&
-        (Number(partnerCoords.lat || partnerCoords.latitude) !== 0 || Number(partnerCoords.lng || partnerCoords.longitude) !== 0);
-
-      const hasBookingCoords = bookingCoords &&
-        (bookingCoords.lat || bookingCoords.latitude) &&
-        (bookingCoords.lng || bookingCoords.longitude) &&
-        (Number(bookingCoords.lat || bookingCoords.latitude) !== 0 || Number(bookingCoords.lng || bookingCoords.longitude) !== 0);
-
-      if (!hasPartnerCoords || !hasBookingCoords) {
-        console.log(`📍 Partner [${partner.name}]: No GPS coords — skipping distance filter, including partner.`);
-        return true;
-      }
-
-      const { isWithinRadius, distanceKm } = isWithinOperatingRadius(partnerCoords, bookingCoords, partnerRadius);
-      if (!isWithinRadius) {
-        console.log(`⛔ Skipping partner [${partner.name}] for booking [${booking.bookingId || booking._id}]: Distance ${distanceKm}km exceeds ${partnerRadius}km operating radius`);
-        return false;
-      }
-
-      return true;
-    });
-
-    console.log(`📢 Real-time Dispatching Booking [${booking.bookingId || booking._id}] for Service [${serviceName}] to ${eligiblePartners.length} matching ONLINE partners!`);
+    const eligiblePartners = partners.filter((p) => isPartnerEligibleForBooking(p, booking, { requireOnline: true }));
 
     const offerPayload = {
       bookingId: booking._id,
@@ -511,35 +410,31 @@ export const dispatchNewJobOffer = async (booking) => {
       categoryName,
       categoryId,
       customerName: booking.customer?.name || 'Customer',
-      customerPhone: booking.customer?.phone || '',
       address: `${booking.address?.title ? booking.address.title + ': ' : ''}${addressLine}, ${bookingCity}`,
       city: bookingCity,
-      amount: booking.amount || serviceObj?.finalPrice || 599,
+      amount: booking.amount,
+      // partner-facing money breakdown only (no customer payment details)
       financialSnapshot: booking.financialSnapshot,
-      timeSlot: booking.timeSlot || 'Immediate / 10:30 AM',
+      timeSlot: booking.timeSlot,
       createdAt: new Date(),
       expirySeconds: 60,
     };
 
-    // Emit directly only to eligible online approved partners' individual rooms
     eligiblePartners.forEach((partner) => {
-      const partnerRoom = `partner_${partner._id}`;
-      io.to(partnerRoom).emit('new_job_offer', offerPayload);
-      console.log(`📡 Emitted new_job_offer to online partner room [${partnerRoom}] (${partner.name})`);
+      io.to(`partner_${partner._id}`).emit('new_job_offer', offerPayload);
     });
 
-    return offerPayload;
+    console.log(`📢 Dispatched booking [${offerPayload.bookingNumber}] to ${eligiblePartners.length} eligible online partners`);
+    return eligiblePartners.map((p) => String(p._id));
   } catch (err) {
     console.error('Error in dispatchNewJobOffer helper:', err);
+    return [];
   }
 };
 
-/**
- * Get Socket.io server instance
- */
 export const getIO = () => {
-  if (!io) {
-    throw new Error('Socket.io has not been initialized yet!');
-  }
+  if (!io) throw new Error('Socket.io has not been initialized yet!');
   return io;
 };
+
+export const getSocketServer = () => io;

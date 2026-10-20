@@ -1,4 +1,4 @@
-import { ZoopClient, isRealZoopConfigured } from './zoopClient.js';
+import { ZoopClient, isRealZoopConfigured, isKycSimulationAllowed, assertKycProviderAvailable } from './zoopClient.js';
 import { User } from '../../models/user.model.js';
 import { KycVerification } from '../../models/kycVerification.model.js';
 import { KycAuditService } from '../kyc/kycAudit.service.js';
@@ -40,6 +40,7 @@ export class FaceLivenessService {
         rawResponse = { error: err.message };
       }
     } else {
+      assertKycProviderAvailable();
       console.log(`[ZOOP Face Liveness Simulation] Liveness verified for partner ${partnerId}`);
       rawResponse = { isSimulation: true, liveness: 'PASS', status: 'VERIFIED' };
     }

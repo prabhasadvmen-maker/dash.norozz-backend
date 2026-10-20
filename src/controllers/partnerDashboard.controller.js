@@ -36,12 +36,12 @@ export class PartnerDashboardController extends BaseController {
   });
 
   calculatePayableAmount = asyncHandler(async (req, res) => {
-    const result = await bookingService.calculatePayableAmount(req.params.id);
+    const result = await bookingService.calculatePayableAmount(req.params.id, req.user);
     return this.sendSuccess(res, result, 'Payable amount calculated successfully');
   });
 
   verifyExtraPayment = asyncHandler(async (req, res) => {
-    const result = await bookingService.verifyExtraPayment(req.params.id, req.body);
+    const result = await bookingService.verifyExtraPayment(req.params.id, req.user, req.body);
     return this.sendSuccess(res, result, result.message);
   });
 

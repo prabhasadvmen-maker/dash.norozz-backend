@@ -16,14 +16,23 @@ export class ChatController extends BaseController {
         $or: [
           ...(isObjectId ? [{ _id: bookingStr }] : []),
           { bookingId: bookingStr },
-          { bookingNumber: bookingStr },
         ],
-      }).select('_id bookingId bookingNumber');
+      }).select('_id bookingId customer partner');
+
+      if (!bookingDoc) {
+        return this.sendSuccess(res, [], 'Chat history retrieved successfully');
+      }
+
+      // Only the customer, the assigned partner or an admin may read a booking's chat
+      const uid = String(req.user._id);
+      const isAdmin = ['superadmin', 'admin', 'cityAdmin'].includes(req.user.role);
+      if (!isAdmin && String(bookingDoc.customer) !== uid && String(bookingDoc.partner || '') !== uid) {
+        return res.status(403).json({ success: false, message: 'You do not have access to this chat' });
+      }
 
       if (bookingDoc) {
         if (bookingDoc._id) bookingAliases.push(bookingDoc._id.toString());
         if (bookingDoc.bookingId) bookingAliases.push(bookingDoc.bookingId);
-        if (bookingDoc.bookingNumber) bookingAliases.push(bookingDoc.bookingNumber);
       }
     } catch (e) {
       console.warn('Booking alias resolution warning:', e);

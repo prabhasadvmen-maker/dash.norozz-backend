@@ -146,11 +146,11 @@ export const getPartnerOnboardingStatus = (user) => {
   };
 };
 
-// Demo/test login for QA and Apple App Review. Set PARTNER_TEST_LOGIN_ENABLED=false to disable.
+// Demo/test login for QA and Apple App Review. Disabled unless PARTNER_TEST_LOGIN_ENABLED=true (never enable in production).
 const TEST_PARTNER_PHONE = normalizePhoneNumber(process.env.PARTNER_TEST_PHONE || '9999999999');
 const TEST_PARTNER_OTP = process.env.PARTNER_TEST_OTP || '123456';
 const isTestPartnerLogin = (cleanPhone) =>
-  process.env.PARTNER_TEST_LOGIN_ENABLED !== 'false' && cleanPhone === TEST_PARTNER_PHONE;
+  process.env.PARTNER_TEST_LOGIN_ENABLED === 'true' && cleanPhone === TEST_PARTNER_PHONE;
 
 export class PartnerAuthService {
   // 1a. REQUEST PARTNER OTP LOGIN

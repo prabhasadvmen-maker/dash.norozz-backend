@@ -17,14 +17,14 @@ export class PaymentController extends BaseController {
   });
 
   walletPay = asyncHandler(async (req, res) => {
-    const { bookingId, amount } = req.body;
-    const result = await paymentService.processWalletPayment(req.user, bookingId, amount);
+    const { bookingId } = req.body;
+    const result = await paymentService.processWalletPayment(req.user, bookingId);
     return this.sendSuccess(res, result, result.message);
   });
 
   processRefund = asyncHandler(async (req, res) => {
     const { reason } = req.body;
-    const result = await paymentService.processRefund(req.params.id, reason);
+    const result = await paymentService.processRefund(req.user, req.params.id, reason);
     return this.sendSuccess(res, result, result.message);
   });
 
@@ -34,7 +34,7 @@ export class PaymentController extends BaseController {
   });
 
   getInvoice = asyncHandler(async (req, res) => {
-    const invoice = await paymentService.generateInvoice(req.params.id);
+    const invoice = await paymentService.generateInvoice(req.params.id, req.user);
     return this.sendSuccess(res, invoice, 'Invoice generated successfully');
   });
 }
