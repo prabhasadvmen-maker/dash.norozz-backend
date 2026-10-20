@@ -8,5 +8,5 @@ export const updateProfileRules = [
 
 export const updateAvailabilityRules = [
   body('isOnline').optional().isBoolean().withMessage('isOnline must be a boolean value'),
-  body('workingHours').optional().trim(),
+  body('workingHours').optional().isArray().withMessage('workingHours must be an array of day schedules'),
 ];

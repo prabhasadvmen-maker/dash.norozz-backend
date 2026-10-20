@@ -383,7 +383,7 @@ export class CityAdminService {
     }
 
     booking.partner = partner._id;
-    booking.status = 'assigned';
+    booking.status = 'Assigned';
     await booking.save();
 
     return { message: `Booking '${booking.bookingId}' assigned to partner '${partner.name}'`, booking };
@@ -395,7 +395,7 @@ export class CityAdminService {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Booking not found in your assigned city jurisdiction');
     }
 
-    booking.status = 'cancelled';
+    booking.status = 'Cancelled';
     booking.cancellationReason = reason || 'Admin Cancellation';
     booking.cancelledBy = 'admin';
     await booking.save();

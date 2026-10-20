@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { bookingRepository } from '../repositories/booking.repository.js';
+import { notificationService } from './notificationService.js';
 import { categoryRepository } from '../repositories/category.repository.js';
 import { serviceRepository } from '../repositories/service.repository.js';
 import { servicePackageRepository } from '../repositories/servicePackage.repository.js';
@@ -228,6 +229,20 @@ export class BookingService {
       throw new ApiError(HTTP_STATUS.CONFLICT, 'Job already claimed by another technician!');
     }
 
+    // Send OTP to customer after partner claims the job
+    try {
+      const customer = await userRepository.findById(updatedBooking.customer);
+      if (customer && updatedBooking.completionOtp) {
+        const contact = customer.phone || customer.email;
+        if (contact) {
+          await notificationService.dispatchOtp(contact, updatedBooking.completionOtp);
+          console.log(`✅ Booking OTP [${updatedBooking.completionOtp}] sent to customer [${contact}]`);
+        }
+      }
+    } catch (otpErr) {
+      console.error('OTP dispatch error (non-blocking):', otpErr.message);
+    }
+
     return {
       message: '🎉 Congratulations! You successfully claimed this booking.',
       status: 'Accepted',
@@ -274,6 +289,20 @@ export class BookingService {
 
     booking.status = 'Accepted';
     await booking.save();
+
+    // Send OTP to customer after partner accepts
+    try {
+      const customer = await userRepository.findById(booking.customer);
+      if (customer && booking.completionOtp) {
+        const contact = customer.phone || customer.email;
+        if (contact) {
+          await notificationService.dispatchOtp(contact, booking.completionOtp);
+          console.log(`✅ Booking OTP [${booking.completionOtp}] sent to customer [${contact}]`);
+        }
+      }
+    } catch (otpErr) {
+      console.error('OTP dispatch error (non-blocking):', otpErr.message);
+    }
 
     return { message: 'Job accepted successfully', status: 'Accepted', booking };
   }

@@ -55,7 +55,7 @@ export class CustomerDashboardController extends BaseController {
   });
 
   getNotifications = asyncHandler(async (req, res) => {
-    const notifs = await customerDashboardService.getNotifications();
+    const notifs = await customerDashboardService.getNotifications(req.user);
     return this.sendSuccess(res, notifs, 'Customer notifications retrieved successfully');
   });
 

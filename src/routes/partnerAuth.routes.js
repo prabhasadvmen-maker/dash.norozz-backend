@@ -26,6 +26,7 @@ router.post('/signup', otpAuthRateLimiter, partnerSignupRules, validate, partner
 router.post('/login', otpAuthRateLimiter, partnerLoginRules, validate, partnerAuthController.login);
 router.post('/otp/request', otpAuthRateLimiter, partnerOtpRequestRules, validate, partnerAuthController.requestOtpLogin);
 router.post('/otp/verify', otpAuthRateLimiter, partnerOtpVerifyRules, validate, partnerAuthController.verifyOtpLogin);
+router.post('/refresh-token', partnerAuthController.refreshToken);
 router.post('/forgot-password', otpAuthRateLimiter, partnerForgotPasswordRules, validate, partnerAuthController.forgotPassword);
 router.post('/reset-password', otpAuthRateLimiter, partnerResetPasswordRules, validate, partnerAuthController.resetPassword);
 

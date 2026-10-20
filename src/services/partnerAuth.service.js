@@ -16,6 +16,7 @@ import { BankAccountVerificationService } from './zoop/bankAccount.service.js';
 import { DrivingLicenseVerificationService } from './zoop/drivingLicense.service.js';
 import { KycStatusService } from './kyc/kycStatus.service.js';
 import { validateAadhaarNumber } from '../utils/aadhaarValidator.js';
+import { verifyRefreshToken } from '../helpers/jwt.helper.js';
 
 /**
  * Helper function to determine partner onboarding progress status and next action step
@@ -442,6 +443,32 @@ export class PartnerAuthService {
   }
 
 
+  // Silent refresh: exchange a valid partner refresh token for a new access token
+  async refreshAccessToken(token) {
+    if (!token) {
+      throw new ApiError(HTTP_STATUS.UNAUTHORIZED, 'Refresh token missing');
+    }
+    let decoded;
+    try {
+      decoded = verifyRefreshToken(token);
+    } catch {
+      throw new ApiError(HTTP_STATUS.UNAUTHORIZED, 'Expired or invalid refresh token');
+    }
+    const user = await userRepository.findById(decoded.id, '+refreshToken');
+    if (!user || user.role !== ROLES.PARTNER || user.refreshToken !== token) {
+      throw new ApiError(HTTP_STATUS.UNAUTHORIZED, 'Invalid or expired refresh token');
+    }
+    if (user.status === 'blocked' || user.status === 'disabled') {
+      throw new ApiError(HTTP_STATUS.FORBIDDEN, 'Partner account is suspended/blocked');
+    }
+    return { accessToken: user.generateAccessToken() };
+  }
+
+  // Logout: revoke the stored refresh token so it can no longer mint access tokens
+  async revokeRefreshToken(partnerId) {
+    await userRepository.model.updateOne({ _id: partnerId }, { $set: { refreshToken: null } });
+  }
+
   // Token Generator Helper
   async generateTokens(user) {
     const accessToken = user.generateAccessToken();
@@ -811,8 +838,20 @@ export class PartnerAuthService {
     if (city) {
       partner.city = city;
       // Preserve partner's chosen operational city for City Admin jurisdiction & KYC approvals
+      // assignedCity is an ObjectId ref, so resolve the city name/id to a City document
       if (!partner.assignedCity) {
-        partner.assignedCity = city;
+        const cityVal = String(city).trim();
+        let cityObj = null;
+        if (cityVal.match(/^[0-9a-fA-F]{24}$/)) {
+          cityObj = await City.findById(cityVal);
+        }
+        if (!cityObj) {
+          const escaped = cityVal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          cityObj = await City.findOne({ name: { $regex: new RegExp(`^${escaped}$`, 'i') } });
+        }
+        if (cityObj) {
+          partner.assignedCity = cityObj._id;
+        }
       }
     }
     if (landmark) partner.landmark = landmark;

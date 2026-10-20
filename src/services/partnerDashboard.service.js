@@ -211,6 +211,17 @@ export class PartnerDashboardService {
       const bookingCoords = b.address?.locationCoordinates || b.locationCoordinates;
       const partnerRadius = partner.serviceRadius || partner.workRadius || partner.operatingRadius || 8;
 
+      const hasPartnerCoords = partnerCoords &&
+        (partnerCoords.lat || partnerCoords.latitude) &&
+        (Number(partnerCoords.lat || partnerCoords.latitude) !== 0 || Number(partnerCoords.lng || partnerCoords.longitude) !== 0);
+
+      const hasBookingCoords = bookingCoords &&
+        (bookingCoords.lat || bookingCoords.latitude) &&
+        (Number(bookingCoords.lat || bookingCoords.latitude) !== 0 || Number(bookingCoords.lng || bookingCoords.longitude) !== 0);
+
+      // If either side has no valid GPS coords, skip distance filter and include
+      if (!hasPartnerCoords || !hasBookingCoords) return true;
+
       const { isWithinRadius } = isWithinOperatingRadius(partnerCoords, bookingCoords, partnerRadius);
       if (!isWithinRadius) return false;
 
@@ -522,22 +533,43 @@ export class PartnerDashboardService {
 
   // 4. RATING & REVIEWS
   async getRating(partner) {
+    const p = await userRepository.findById(partner._id);
+    const breakdown = p?.ratingBreakdown || {};
+    const count = (star) => Number(breakdown?.[star] ?? breakdown?.get?.(String(star)) ?? 0);
     return {
-      averageRating: 4.85,
-      totalRatings: 142,
-      fiveStar: 118,
-      fourStar: 18,
-      threeStar: 4,
-      twoStar: 2,
-      oneStar: 0,
+      averageRating: p?.averageRating ?? 0,
+      totalRatings: p?.totalRatings ?? 0,
+      fiveStar: count(5),
+      fourStar: count(4),
+      threeStar: count(3),
+      twoStar: count(2),
+      oneStar: count(1),
     };
   }
 
   async getReviews(partner) {
-    return [
-      { id: 'REV-1', customer: 'Ananya Deshmukh', rating: 5, comment: 'Punctual, professional AC foam cleaning. Highly recommended!', date: '27 July 2026' },
-      { id: 'REV-2', customer: 'Vikram Mehta', rating: 4.8, comment: 'Great job with house deep cleaning.', date: '25 July 2026' },
-    ];
+    const { Review } = await import('../models/review.model.js');
+    const reviews = await Review.find({
+      revieweeId: partner._id,
+      status: 'PUBLISHED',
+      isDeleted: false,
+    })
+      .populate('reviewerId', 'name profileImage')
+      .populate('orderId', 'bookingNumber packageName serviceName')
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .lean();
+
+    return reviews.map((r) => ({
+      id: r._id,
+      customer: r.reviewerId?.name || 'Customer',
+      customerImage: r.reviewerId?.profileImage || '',
+      rating: r.rating,
+      comment: r.comment || '',
+      service: r.orderId?.packageName || r.orderId?.serviceName || '',
+      bookingNumber: r.orderId?.bookingNumber || '',
+      date: r.createdAt,
+    }));
   }
 
   // 5. PROFILE & AVAILABILITY MANAGEMENT
@@ -574,11 +606,13 @@ export class PartnerDashboardService {
   }
 
   async getAvailability(partner) {
+    const p = await userRepository.findById(partner._id);
+    const workingHours = Array.isArray(p?.workingHours) ? p.workingHours : [];
     return {
       partnerId: partner._id,
-      isOnline: true,
-      workingHours: '09:00 AM - 08:00 PM',
-      workingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+      isOnline: p?.isOnline ?? true,
+      workingHours,
+      workingDays: workingHours.filter((d) => d.isOpen).map((d) => d.day),
     };
   }
 
@@ -593,13 +627,23 @@ export class PartnerDashboardService {
 
     const updateData = {};
     if (isOnline !== undefined) updateData.isOnline = Boolean(isOnline);
-    if (workingHours) updateData.workingHours = workingHours;
+    if (Array.isArray(workingHours)) {
+      updateData.workingHours = workingHours
+        .filter((d) => d && d.day)
+        .map((d) => ({
+          day: String(d.day),
+          isOpen: d.isOpen !== false,
+          openTime: d.openTime || '09:00 AM',
+          closeTime: d.closeTime || '07:00 PM',
+        }));
+      updateData.isWorkingHoursSet = true;
+    }
 
     const updatedUser = await userRepository.updateById(partnerId, updateData);
     return {
       message: `Technician status updated to ${updatedUser?.isOnline ? 'ONLINE' : 'OFFLINE'}`,
       isOnline: updatedUser?.isOnline ?? isOnline,
-      workingHours: updatedUser?.workingHours || '09:00 AM - 08:00 PM',
+      workingHours: updatedUser?.workingHours || [],
     };
   }
 
@@ -614,10 +658,45 @@ export class PartnerDashboardService {
   }
 
   async getNotifications(partner) {
-    return [
-      { id: 'NOTIF-1', title: 'KYC Document Received', message: 'Your documents are under review by City Admin.', time: '2 hours ago' },
-      { id: 'NOTIF-2', title: 'Welcome to NOROZZ', message: 'Complete your profile to start receiving bookings.', time: '1 day ago' },
-    ];
+    const p = await userRepository.findById(partner._id);
+    const items = [];
+
+    const kycMessages = {
+      approved: ['KYC Approved', 'Your KYC is approved. You can now receive bookings.'],
+      rejected: ['KYC Rejected', 'Your KYC was rejected. Please re-upload your documents.'],
+      pending: ['KYC Under Review', 'Your documents are under review by City Admin.'],
+    };
+    const [kycTitle, kycMessage] = kycMessages[p?.kycStatus] || kycMessages.pending;
+    items.push({ id: 'kyc-status', type: 'kyc', title: kycTitle, message: kycMessage, createdAt: p?.updatedAt || p?.createdAt });
+
+    const bookings = await bookingRepository.model
+      .find({ $or: [{ partner: partner._id }, { partner: String(partner._id) }] })
+      .select('bookingNumber status packageName serviceName updatedAt')
+      .sort({ updatedAt: -1 })
+      .limit(15)
+      .lean();
+    for (const b of bookings) {
+      items.push({
+        id: `booking-${b._id}`,
+        type: 'booking',
+        title: `Booking ${b.bookingNumber || ''} ${b.status}`.trim(),
+        message: b.packageName || b.serviceName || 'Service booking update',
+        createdAt: b.updatedAt,
+      });
+    }
+
+    const txns = await WalletTransaction.find({ partnerId: partner._id }).sort({ createdAt: -1 }).limit(10).lean();
+    for (const t of txns) {
+      items.push({
+        id: `txn-${t._id}`,
+        type: 'wallet',
+        title: `${t.type === 'Credit' ? 'Credited' : 'Debited'} ₹${t.amount}`,
+        message: t.title,
+        createdAt: t.createdAt,
+      });
+    }
+
+    return items.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)).slice(0, 30);
   }
 
   // 7. SETTINGS PREFERENCES
@@ -648,7 +727,8 @@ export class PartnerDashboardService {
       throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Current password entered is incorrect');
     }
 
-    user.password = await bcrypt.hash(newPassword, 10);
+    // Plain value: the User pre-save hook hashes it (hashing here would double-hash)
+    user.password = newPassword;
     await user.save();
 
     return { message: 'Password updated successfully' };

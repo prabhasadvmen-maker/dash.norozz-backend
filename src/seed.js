@@ -41,7 +41,6 @@ async function seed() {
 
     // 2. City Admins Seeding with proper City ObjectId assignment
     const cityAdmins = [
-      { name: 'Prabhas singh', email: 'delhi@norozz.com', cityName: 'Delhi NCR' },
       { name: 'Bengaluru City Operations Manager', email: 'bengaluru.admin@norozz.com', cityName: 'Bengaluru' },
       { name: 'Mumbai City Operations Manager', email: 'mumbai.admin@norozz.com', cityName: 'Mumbai' },
       { name: 'Hyderabad City Operations Manager', email: 'hyderabad.admin@norozz.com', cityName: 'Hyderabad' },

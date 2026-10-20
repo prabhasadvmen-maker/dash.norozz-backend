@@ -19,7 +19,7 @@ export class AuthController extends BaseController {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days (matches REFRESH_TOKEN_EXPIRY)
     });
   }
 
@@ -46,7 +46,7 @@ export class AuthController extends BaseController {
   });
 
   customerRefreshToken = asyncHandler(async (req, res) => {
-    const refreshToken = req.cookies?.refreshToken || req.body.refreshToken;
+    const refreshToken = req.body?.token || req.body?.refreshToken || req.cookies?.refreshToken;
     const result = await authService.customerRefreshToken(refreshToken);
     this.setAccessTokenCookie(res, result.accessToken);
     return this.sendSuccess(res, { accessToken: result.accessToken }, 'Access Token refreshed successfully');

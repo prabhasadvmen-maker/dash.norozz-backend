@@ -9,7 +9,7 @@ export class PartnerAuthController extends BaseController {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days (matches REFRESH_TOKEN_EXPIRY)
     });
   }
 
@@ -46,7 +46,14 @@ export class PartnerAuthController extends BaseController {
   });
 
 
+  refreshToken = asyncHandler(async (req, res) => {
+    const token = req.body?.token || req.body?.refreshToken || req.cookies?.refreshToken;
+    const result = await partnerAuthService.refreshAccessToken(token);
+    return this.sendSuccess(res, result, 'Access Token refreshed successfully');
+  });
+
   logout = asyncHandler(async (req, res) => {
+    await partnerAuthService.revokeRefreshToken(req.user._id);
     res.clearCookie('refreshToken');
     return this.sendSuccess(res, null, 'Partner logged out successfully');
   });

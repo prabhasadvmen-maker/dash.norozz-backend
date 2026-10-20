@@ -381,11 +381,43 @@ export class CustomerDashboardService {
     };
   }
 
-  async getNotifications() {
-    return [
-      { id: 'NOTIF-1', title: 'Technician Assigned', message: 'Rajesh Kumar has been assigned for your AC Foam Jet Deep Cleaning.', time: '10 mins ago' },
-      { id: 'NOTIF-2', title: 'Exclusive Deal', message: 'Use code SUMMERAC for ₹200 OFF on AC servicing today!', time: '3 hours ago' },
-    ];
+  async getNotifications(customer) {
+    const { WalletTransaction } = await import('../models/walletTransaction.model.js');
+    const items = [];
+
+    const bookings = await bookingRepository.model
+      .find({ customer: customer._id })
+      .select('bookingNumber status packageName serviceName updatedAt')
+      .sort({ updatedAt: -1 })
+      .limit(20)
+      .lean();
+    for (const b of bookings) {
+      items.push({
+        id: `booking-${b._id}`,
+        category: 'booking',
+        title: `Booking ${b.bookingNumber || ''} ${b.status}`.trim(),
+        message: b.packageName || b.serviceName || 'Your service booking was updated',
+        createdAt: b.updatedAt,
+        link: '/customer/bookings',
+      });
+    }
+
+    const txns = await WalletTransaction.find({ user: customer._id }).sort({ createdAt: -1 }).limit(10).lean();
+    for (const t of txns) {
+      items.push({
+        id: `txn-${t._id}`,
+        category: 'system',
+        title: `${t.type === 'Credit' ? 'Credited' : 'Debited'} ₹${t.amount}`,
+        message: t.title,
+        createdAt: t.createdAt,
+        link: '/customer/wallet',
+      });
+    }
+
+    return items
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+      .slice(0, 30)
+      .map((n) => ({ ...n, time: n.createdAt ? new Date(n.createdAt).toLocaleString('en-IN') : 'Recently' }));
   }
 
   async getReviews(customer) {

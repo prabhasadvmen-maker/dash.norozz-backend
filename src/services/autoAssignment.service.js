@@ -24,18 +24,36 @@ export class AutoAssignmentService {
 
     const bookingCity = booking.city || 'Delhi NCR';
 
-    // 5-Condition Candidate Query
-    const candidatePartners = await userRepository.find({
+    // Try online partners first, fallback to any active approved partner in city
+    let candidatePartners = await userRepository.find({
       role: ROLES.PARTNER,
       status: 'active',
       kycStatus: 'approved',
       isOnline: true,
       isAvailable: true,
-      $or: [
-        { assignedCity: bookingCity },
-        { city: bookingCity },
-      ],
+      $or: [{ assignedCity: bookingCity }, { city: bookingCity }],
     });
+
+    // Fallback: no online partners → try any active approved partner in city
+    if (!candidatePartners || candidatePartners.length === 0) {
+      console.log(`⚠️ No online partners in [${bookingCity}] — trying any active approved partner...`);
+      candidatePartners = await userRepository.find({
+        role: ROLES.PARTNER,
+        status: 'active',
+        kycStatus: 'approved',
+        $or: [{ assignedCity: bookingCity }, { city: bookingCity }],
+      });
+    }
+
+    // Last resort: ignore city filter
+    if (!candidatePartners || candidatePartners.length === 0) {
+      console.log(`⚠️ No partners in city [${bookingCity}] — trying any active approved partner nationwide...`);
+      candidatePartners = await userRepository.find({
+        role: ROLES.PARTNER,
+        status: 'active',
+        kycStatus: 'approved',
+      });
+    }
 
     if (candidatePartners && candidatePartners.length > 0) {
       // Pick first available approved online partner
