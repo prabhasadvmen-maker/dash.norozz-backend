@@ -87,11 +87,27 @@ export class BookingService {
   async sendCompletionOtp(booking) {
     try {
       const full = await Booking.findById(booking._id).select('+completionOtp customer');
-      const customer = await userRepository.findById(full.customer);
-      const contact = customer?.phone || customer?.email;
-      if (contact && full.completionOtp) {
-        await notificationService.dispatchOtp(contact, full.completionOtp);
+      if (!full) {
+        console.error('sendCompletionOtp: Booking not found for id', booking._id);
+        return;
       }
+      if (!full.completionOtp) {
+        console.error('sendCompletionOtp: completionOtp missing for booking', booking._id);
+        return;
+      }
+      const customer = await userRepository.findById(full.customer);
+      if (!customer) {
+        console.error('sendCompletionOtp: Customer not found for booking', booking._id);
+        return;
+      }
+      const contact = customer.phone || customer.email;
+      if (!contact) {
+        console.error('sendCompletionOtp: Customer has no phone or email, bookingId:', booking._id);
+        return;
+      }
+      console.log(`📲 Sending completion OTP to customer contact: ${contact}`);
+      await notificationService.dispatchOtp(contact, full.completionOtp);
+      console.log(`✅ Completion OTP sent successfully for booking: ${booking._id}`);
     } catch (err) {
       console.error('Completion OTP dispatch error (non-blocking):', err.message);
     }
