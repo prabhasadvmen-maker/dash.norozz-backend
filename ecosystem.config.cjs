@@ -3,7 +3,7 @@ module.exports = {
     {
       name: 'norozz-api',
       script: 'src/server.js',
-      cwd: '/home/ubuntu/Norozz1/Api_norozz',
+      cwd: '/home/ubuntu/Api_norozz',
       interpreter: 'node',
       env: {
         NODE_ENV: 'production',

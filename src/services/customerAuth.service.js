@@ -10,6 +10,12 @@ import { r2StorageService } from './r2Storage.service.js';
 import { normalizePhoneNumber } from '../utils/phone.util.js';
 import { OTP_WINDOW_MS, OTP_MAX_PER_WINDOW, OTP_COOLDOWN_SEC } from '../middleware/rateLimiter.middleware.js';
 
+// Demo/test login for QA and Apple App Review. Disabled unless CUSTOMER_TEST_LOGIN_ENABLED=true
+const TEST_CUSTOMER_PHONE = normalizePhoneNumber(process.env.CUSTOMER_TEST_PHONE || '8888888888');
+const TEST_CUSTOMER_OTP = process.env.CUSTOMER_TEST_OTP || '123456';
+const isTestCustomerLogin = (input) =>
+  process.env.CUSTOMER_TEST_LOGIN_ENABLED === 'true' && input === TEST_CUSTOMER_PHONE;
+
 export class CustomerAuthService {
 
   // Token Generator Helper
@@ -68,6 +74,11 @@ export class CustomerAuthService {
   // 3. OTP LOGIN (REQUEST & VERIFY)
   async requestOtpLogin(emailOrPhone) {
     const normalizedInput = emailOrPhone && !emailOrPhone.includes('@') ? normalizePhoneNumber(emailOrPhone) : emailOrPhone;
+
+    if (isTestCustomerLogin(normalizedInput)) {
+      return { emailOrPhone: normalizedInput, message: 'OTP sent successfully for instant login' };
+    }
+
     const existingUser = await userRepository.findByEmailOrPhone(normalizedInput);
     if (existingUser && existingUser.role !== ROLES.CUSTOMER) {
       const roleName = existingUser.role === ROLES.PARTNER ? 'Partner' : 'Admin';
@@ -112,9 +123,18 @@ export class CustomerAuthService {
 
   async verifyOtpLogin(emailOrPhone, otp) {
     const normalizedInput = emailOrPhone && !emailOrPhone.includes('@') ? normalizePhoneNumber(emailOrPhone) : emailOrPhone;
-    const validOtp = await otpRepository.findLatestValidOtp(normalizedInput, 'login');
-    if (!validOtp || validOtp.otp !== otp) {
-      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Invalid or expired OTP code');
+    const isTestLogin = isTestCustomerLogin(normalizedInput);
+    let validOtp = null;
+
+    if (isTestLogin) {
+      if (String(otp) !== TEST_CUSTOMER_OTP) {
+        throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Invalid or expired OTP code');
+      }
+    } else {
+      validOtp = await otpRepository.findLatestValidOtp(normalizedInput, 'login');
+      if (!validOtp || validOtp.otp !== otp) {
+        throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Invalid or expired OTP code');
+      }
     }
 
     let isNewUser = false;
@@ -172,7 +192,7 @@ export class CustomerAuthService {
       }
     }
 
-    await otpRepository.markAsVerified(validOtp._id);
+    if (validOtp) await otpRepository.markAsVerified(validOtp._id);
 
     const authResult = await this.generateTokens(user);
     return { ...authResult, isNewUser, isProfileCompleted: !isNewUser };
