@@ -3,7 +3,7 @@ import { User } from '../models/user.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { ROLES } from '../constants/roles.constant.js';
-import { isPartnerEligibleForBooking } from '../utils/partnerEligibility.js';
+import { isPartnerEligibleForBooking, resolvePartnerCities } from '../utils/partnerEligibility.js';
 import { emitToUser, notifyBookingUpdate } from '../sockets/index.js';
 
 const ACTIVE_JOB_STATUSES = ['Assigned', 'Accepted', 'On The Way', 'Started'];
@@ -22,15 +22,15 @@ export class AutoAssignmentService {
       return { success: false, status: booking.status, message: 'Booking is not eligible for auto-assignment.', booking };
     }
 
-    const candidates = (
-      await User.find({
-        role: ROLES.PARTNER,
-        status: 'active',
-        kycStatus: 'approved',
-        isOnline: true,
-        isAvailable: { $ne: false },
-      }).populate('assignedCity', 'name')
-    ).filter((p) => isPartnerEligibleForBooking(p, booking, { requireOnline: true }));
+    const partners = await User.find({
+      role: ROLES.PARTNER,
+      status: 'active',
+      kycStatus: 'approved',
+      isOnline: true,
+      isAvailable: { $ne: false },
+    }).lean();
+    await resolvePartnerCities(partners);
+    const candidates = partners.filter((p) => isPartnerEligibleForBooking(p, booking, { requireOnline: true }));
 
     if (candidates.length === 0) {
       return {

@@ -5,7 +5,7 @@ import { ChatMessage } from '../models/chat.model.js';
 import { User } from '../models/user.model.js';
 import { ROLES } from '../constants/roles.constant.js';
 import { verifyAccessToken } from '../helpers/jwt.helper.js';
-import { isPartnerEligibleForBooking } from '../utils/partnerEligibility.js';
+import { isPartnerEligibleForBooking, resolvePartnerCities } from '../utils/partnerEligibility.js';
 
 let io = null;
 
@@ -398,7 +398,8 @@ export const dispatchNewJobOffer = async (booking) => {
 
     const partners = await userRepository.model
       .find({ role: ROLES.PARTNER, status: 'active', kycStatus: 'approved', isOnline: true })
-      .populate('assignedCity', 'name');
+      .lean();
+    await resolvePartnerCities(partners);
 
     const eligiblePartners = partners.filter((p) => isPartnerEligibleForBooking(p, booking, { requireOnline: true }));
 

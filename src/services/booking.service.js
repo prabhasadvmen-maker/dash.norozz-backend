@@ -16,7 +16,7 @@ import { ApiError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { ROLES } from '../constants/roles.constant.js';
 import { dispatchNewJobOffer, notifyBookingUpdate, emitToUser, emitToAllPartners } from '../sockets/index.js';
-import { isPartnerEligibleForBooking } from '../utils/partnerEligibility.js';
+import { isPartnerEligibleForBooking, resolvePartnerCities } from '../utils/partnerEligibility.js';
 import { financialCalculatorService } from './financialCalculator.service.js';
 import { financialEngineService } from './financialEngine.service.js';
 import { getGatewayMode } from './paymentGateway.service.js';
@@ -407,7 +407,8 @@ export class BookingService {
     const candidate = await Booking.findById(bookingId);
     if (!candidate) throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Booking not found');
 
-    const partnerDoc = await User.findById(partnerUser._id).populate('assignedCity', 'name');
+    const partnerDoc = await User.findById(partnerUser._id).lean();
+    await resolvePartnerCities(partnerDoc);
     if (!isPartnerEligibleForBooking(partnerDoc, candidate)) {
       throw new ApiError(HTTP_STATUS.FORBIDDEN, 'This job is outside your service category, offered services or work area.');
     }

@@ -24,7 +24,14 @@ export const verifyJWT = asyncHandler(async (req, res, next) => {
     throw new ApiError(HTTP_STATUS.UNAUTHORIZED, error?.message || 'Invalid or expired Access Token');
   }
 
-  const user = await User.findById(decoded.id).populate('assignedCity', 'name');
+  // Legacy users may store a city name string in assignedCity; populate would throw a CastError for them
+  let user;
+  try {
+    user = await User.findById(decoded.id).populate('assignedCity', 'name');
+  } catch (err) {
+    if (err?.name !== 'CastError') throw err;
+    user = await User.findById(decoded.id).lean();
+  }
 
   if (!user) {
     throw new ApiError(HTTP_STATUS.UNAUTHORIZED, 'Invalid Access Token: User not found');

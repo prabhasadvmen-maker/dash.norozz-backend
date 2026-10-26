@@ -10,7 +10,7 @@ import bcrypt from 'bcryptjs';
 import { ApiError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { dispatchNewJobOffer, notifyBookingUpdate, emitToUser } from '../sockets/index.js';
-import { isPartnerEligibleForBooking } from '../utils/partnerEligibility.js';
+import { isPartnerEligibleForBooking, resolvePartnerCities } from '../utils/partnerEligibility.js';
 import { financialEngineService } from './financialEngine.service.js';
 import { User } from '../models/user.model.js';
 import { SystemSettings } from '../models/systemSettings.model.js';
@@ -158,7 +158,8 @@ export class PartnerDashboardService {
   async getPendingBookings(partner) {
     this.checkKycApproved(partner);
 
-    const partnerDoc = await User.findById(partner._id).populate('assignedCity', 'name');
+    const partnerDoc = await User.findById(partner._id).lean();
+    await resolvePartnerCities(partnerDoc);
 
     // Only PAID, unclaimed, open offers this partner has not already turned down
     const openBookings = await bookingRepository.model
@@ -667,7 +668,8 @@ export class PartnerDashboardService {
     const { User } = await import('../models/user.model.js');
     const { Ticket } = await import('../models/ticket.model.js');
 
-    const partner = await User.findById(partnerId).populate('assignedCity');
+    const partner = await User.findById(partnerId).lean();
+    await resolvePartnerCities(partner);
     const ticketId = `TKT-${Math.floor(100000 + Math.random() * 900000)}`;
     const complaint = await Complaint.create({
       ticketId,

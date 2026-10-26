@@ -1,3 +1,5 @@
+import mongoose from 'mongoose';
+import { City } from '../models/city.model.js';
 import { isWithinOperatingRadius } from './distance.util.js';
 
 const norm = (v) => String(v || '').trim().toLowerCase();
@@ -20,6 +22,30 @@ export const getPartnerCityName = (partner) => {
   if (ac && typeof ac === 'object' && ac.name) return ac.name;
   if (typeof ac === 'string' && ac && !/^[0-9a-fA-F]{24}$/.test(ac)) return ac;
   return partner?.city || '';
+};
+
+/**
+ * Replaces `assignedCity` on lean partner docs with `{ _id, name }`. Legacy docs may hold a plain city name
+ * ("Greater Noida") instead of an ObjectId, which makes Mongoose `.populate('assignedCity')` throw a CastError,
+ * so cities are resolved manually and name strings are passed through untouched.
+ */
+export const resolvePartnerCities = async (partners) => {
+  const list = Array.isArray(partners) ? partners : [partners];
+  const ids = [
+    ...new Set(
+      list
+        .map((p) => p?.assignedCity)
+        .filter((v) => v && typeof v !== 'string' && mongoose.isValidObjectId(v))
+        .map(String)
+    ),
+  ];
+  const cities = ids.length ? await City.find({ _id: { $in: ids } }).select('name').lean() : [];
+  const byId = new Map(cities.map((c) => [String(c._id), c]));
+  for (const p of list) {
+    const ac = p?.assignedCity;
+    if (ac && typeof ac !== 'string' && byId.has(String(ac))) p.assignedCity = byId.get(String(ac));
+  }
+  return partners;
 };
 
 const sameCity = (a, b) => {
