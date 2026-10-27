@@ -28,7 +28,7 @@ export class R2StorageService {
         throw new Error('Cloudflare R2 storage credentials are not properly configured in environment variables.');
       }
       const key = `${folder}/${Date.now()}_${fileName.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-      
+
       const command = new PutObjectCommand({
         Bucket: R2_BUCKET,
         Key: key,
@@ -41,7 +41,7 @@ export class R2StorageService {
       // Return public Media Proxy URL (or R2 Public Custom Domain / r2.dev if configured)
       let baseMediaUrl = process.env.R2_PUBLIC_DOMAIN;
       if (!baseMediaUrl || baseMediaUrl.includes('r2.cloudflarestorage.com')) {
-        const host = process.env.SERVER_URL || `http://localhost:${process.env.PORT || 5000}`;
+        const host = process.env.SERVER_URL || (process.env.NODE_ENV === 'production' ? 'https://api.norozz.in' : `http://localhost:${process.env.PORT || 5000}`);
         baseMediaUrl = `${host}/api/media`;
       }
       const publicUrl = `${baseMediaUrl.replace(/\/$/, '')}/${key}`;
@@ -77,7 +77,7 @@ export class R2StorageService {
       
       let baseMediaUrl = process.env.R2_PUBLIC_DOMAIN;
       if (!baseMediaUrl || baseMediaUrl.includes('r2.cloudflarestorage.com')) {
-        const host = process.env.SERVER_URL || `http://localhost:${process.env.PORT || 5000}`;
+        const host = process.env.SERVER_URL || (process.env.NODE_ENV === 'production' ? 'https://api.norozz.in' : `http://localhost:${process.env.PORT || 5000}`);
         baseMediaUrl = `${host}/api/media`;
       }
       const publicUrl = `${baseMediaUrl.replace(/\/$/, '')}/${key}`;

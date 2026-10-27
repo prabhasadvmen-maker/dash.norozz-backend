@@ -12,6 +12,7 @@ import { HTTP_STATUS } from './constants/httpStatus.js';
 
 import { generalApiRateLimiter } from './middleware/rateLimiter.middleware.js';
 import { sanitizeInput } from './middleware/sanitize.middleware.js';
+import { rewriteLocalMediaUrls } from './middleware/mediaUrl.middleware.js';
 
 const app = express();
 
@@ -67,6 +68,7 @@ if (process.env.NODE_ENV !== 'test') {
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(sanitizeInput);
+app.use(rewriteLocalMediaUrls);
 app.use(cookieParser());
 app.use(express.static('public'));
 
