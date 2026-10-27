@@ -7,6 +7,7 @@ import {
   updateCityAdminStatusRules,
 } from '../validators/superAdmin.validator.js';
 import { validate } from '../validators/index.js';
+import { partnerHiringController } from '../controllers/partnerHiring.controller.js';
 import { verifyJWT } from '../middleware/auth.middleware.js';
 import { authorizeRoles } from '../middleware/role.middleware.js';
 import { ROLES } from '../constants/roles.constant.js';
@@ -20,6 +21,10 @@ router.use(authorizeRoles(ROLES.SUPER_ADMIN, ROLES.ADMIN));
 // Dashboard Statistics & Analytics
 router.get('/dashboard', superAdminController.getDashboard);
 
+// Platform Growth & Financial Reports (revenue by city, partner payouts, GST log)
+router.get('/reports/overview', superAdminController.getReportsOverview);
+router.get('/reports/export', superAdminController.exportReport);
+
 // City Admin Management (CRUD)
 router.get('/city-admins', superAdminController.getCityAdmins);
 router.post('/city-admins', createCityAdminRules, validate, superAdminController.createCityAdmin);
@@ -30,6 +35,12 @@ router.patch('/city-admins/:id/reset-password', resetCityAdminPasswordRules, val
 router.post('/city-admins/:id/impersonate', superAdminController.impersonateCityAdmin);
 router.post('/city-admin/:id/impersonate', superAdminController.impersonateCityAdmin);
 router.post('/impersonate/:id', superAdminController.impersonateCityAdmin);
+
+// Partner Hiring Applications (review & verification)
+router.get('/partner-hiring/stats', partnerHiringController.adminStats);
+router.get('/partner-hiring', partnerHiringController.adminList);
+router.get('/partner-hiring/:id', partnerHiringController.adminGet);
+router.patch('/partner-hiring/:id/review', partnerHiringController.adminReview);
 
 // Master Platform Directories
 router.get('/customers', superAdminController.getCustomers);

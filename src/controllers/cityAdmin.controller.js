@@ -1,6 +1,9 @@
 import { BaseController } from './base.controller.js';
 import { cityAdminService } from '../services/cityAdmin.service.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { cityPaymentsService } from '../services/cityPayments.service.js';
+import { cityReportsService } from '../services/cityReports.service.js';
+import { cityPartnerProfileService } from '../services/cityPartnerProfile.service.js';
 import { City } from '../models/city.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
@@ -129,6 +132,52 @@ export class CityAdminController extends BaseController {
     }, 'No city assigned. Showing 0 revenue.');
     const revenue = await cityAdminService.getCityRevenue(assignedCity);
     return this.sendSuccess(res, revenue, `Revenue for city '${assignedCity}' retrieved successfully`);
+  });
+
+  getPaymentsOverview = asyncHandler(async (req, res) => {
+    const assignedCity = await this._resolveCity(req.user);
+    if (!assignedCity) throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'No city assigned to this account');
+    const data = await cityPaymentsService.getOverview(assignedCity, req.query);
+    return this.sendSuccess(res, data, `Payments overview for '${assignedCity}' retrieved successfully`);
+  });
+
+  getPaymentTransactions = asyncHandler(async (req, res) => {
+    const assignedCity = await this._resolveCity(req.user);
+    if (!assignedCity) throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'No city assigned to this account');
+    const data = await cityPaymentsService.getTransactions(assignedCity, req.query);
+    return this.sendSuccess(res, data, 'Payment transactions retrieved successfully');
+  });
+
+  exportPaymentTransactions = asyncHandler(async (req, res) => {
+    const assignedCity = await this._resolveCity(req.user);
+    if (!assignedCity) throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'No city assigned to this account');
+    const csv = await cityPaymentsService.exportCsv(assignedCity, req.query);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="payments-${assignedCity.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${Date.now()}.csv"`);
+    return res.status(HTTP_STATUS.OK).send(`﻿${csv}`);
+  });
+
+  getPartnerProfile = asyncHandler(async (req, res) => {
+    const assignedCity = await this._resolveCity(req.user);
+    if (!assignedCity) throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'No city assigned to this account');
+    const profile = await cityPartnerProfileService.getProfile(req.params.id, assignedCity);
+    return this.sendSuccess(res, profile, 'Partner profile retrieved successfully');
+  });
+
+  getReportsOverview = asyncHandler(async (req, res) => {
+    const assignedCity = await this._resolveCity(req.user);
+    if (!assignedCity) throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'No city assigned to this account');
+    const data = await cityReportsService.getOverview(assignedCity, req.query);
+    return this.sendSuccess(res, data, `Performance report for '${assignedCity}' generated successfully`);
+  });
+
+  exportReportBookings = asyncHandler(async (req, res) => {
+    const assignedCity = await this._resolveCity(req.user);
+    if (!assignedCity) throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'No city assigned to this account');
+    const csv = await cityReportsService.exportCsv(assignedCity, req.query);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="bookings-report-${assignedCity.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${Date.now()}.csv"`);
+    return res.status(HTTP_STATUS.OK).send(`﻿${csv}`);
   });
 
   getTickets = asyncHandler(async (req, res) => {

@@ -13,8 +13,12 @@ const otpSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ['verification', 'login', 'resetPassword', 'secondaryVerify', 'partnerLogin'],
+      enum: ['verification', 'login', 'resetPassword', 'secondaryVerify', 'partnerLogin', 'hiringEmail', 'hiringMobile'],
       default: 'resetPassword',
+    },
+    attempts: {
+      type: Number,
+      default: 0,
     },
     isVerified: {
       type: Boolean,

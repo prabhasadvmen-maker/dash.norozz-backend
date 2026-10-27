@@ -19,10 +19,16 @@ router.use(authorizeRoles(ROLES.SUPER_ADMIN, ROLES.CITY_ADMIN, ROLES.ADMIN));
 // City Dashboard & Revenue Analytics
 router.get('/dashboard', cityAdminController.getDashboard);
 router.get('/revenue', cityAdminController.getRevenue);
+router.get('/payments/overview', cityAdminController.getPaymentsOverview);
+router.get('/payments/transactions', cityAdminController.getPaymentTransactions);
+router.get('/payments/export', cityAdminController.exportPaymentTransactions);
+router.get('/reports/overview', cityAdminController.getReportsOverview);
+router.get('/reports/export', cityAdminController.exportReportBookings);
 
 // Partner KYC & Account Management (Assigned City Scope)
 router.get('/partners', cityAdminController.getPartners);
 router.get('/customers', cityAdminController.getCustomers);
+router.get('/partners/:id/profile', cityAdminController.getPartnerProfile);
 router.patch('/partners/:id/approve', cityAdminController.approvePartner);
 router.patch('/partners/:id/reject', rejectPartnerRules, validate, cityAdminController.rejectPartner);
 router.patch('/partners/:id/documents/status', cityAdminController.updateDocumentStatus);

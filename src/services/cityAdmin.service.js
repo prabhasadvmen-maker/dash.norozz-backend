@@ -91,6 +91,7 @@ export class CityAdminService {
       }
 
       pObj.category = catDisplay || 'General Service Technician';
+      if (pObj.agencyName) pObj.agencyName = String(pObj.agencyName).replace(/\s*\([0-9a-f]{24}\)\s*$/i, '').trim();
       return pObj;
     });
   }
@@ -308,14 +309,23 @@ export class CityAdminService {
     return { message: `Partner '${partner.name}' documents verified and activated`, partner };
   }
 
+  async setPartnerStatus(partnerId, status) {
+    const { User } = await import('../models/user.model.js');
+    await User.updateOne({ _id: partnerId }, { $set: { status } });
+    return status;
+  }
+
   async suspendPartner(partnerId, assignedCity) {
     const partner = await userRepository.findById(partnerId);
     if (!partner || partner.role !== ROLES.PARTNER) {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found');
     }
+    if (assignedCity && !this.matchesCity(partner, assignedCity, await this.getCityNameMap())) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found in your assigned city jurisdiction');
+    }
 
-    partner.status = 'blocked';
-    await partner.save();
+    // Targeted update: a full-document save() would re-validate unrelated legacy fields on old records
+    partner.status = await this.setPartnerStatus(partner._id, 'blocked');
 
     return { message: `Partner '${partner.name}' suspended successfully`, partner };
   }
@@ -325,9 +335,12 @@ export class CityAdminService {
     if (!partner || partner.role !== ROLES.PARTNER) {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found');
     }
+    if (assignedCity && !this.matchesCity(partner, assignedCity, await this.getCityNameMap())) {
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Partner not found in your assigned city jurisdiction');
+    }
 
-    partner.status = 'active';
-    await partner.save();
+    // Targeted update: a full-document save() would re-validate unrelated legacy fields on old records
+    partner.status = await this.setPartnerStatus(partner._id, 'active');
 
     return { message: `Partner '${partner.name}' activated successfully`, partner };
   }

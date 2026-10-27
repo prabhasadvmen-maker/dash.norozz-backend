@@ -23,6 +23,7 @@ import translationRoutes from './translation.routes.js';
 import locationRoutes from './location.routes.js';
 import kycRoutes from './kyc.routes.js';
 import pushNotificationRoutes from './pushNotification.routes.js';
+import partnerHiringRoutes from './partnerHiring.routes.js';
 
 const router = Router();
 
@@ -31,6 +32,7 @@ router.use('/kyc', kycRoutes);
 router.use('/auth', authRoutes);
 router.use('/super-admin', superAdminRoutes);
 router.use('/city-admin', cityAdminRoutes);
+router.use('/partner-hiring', partnerHiringRoutes);
 router.use('/partner/auth', partnerAuthRoutes);
 router.use('/partner', partnerDashboardRoutes);
 router.use('/customer/auth', customerAuthRoutes);

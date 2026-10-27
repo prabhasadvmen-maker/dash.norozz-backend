@@ -68,8 +68,9 @@ const userSchema = new mongoose.Schema(
       enum: ['Male', 'Female', 'Other', ''],
       default: '',
     },
+    // Customers store a plain string; partners store a structured { addressLine, city, state, pincode, locationCoordinates } object
     address: {
-      type: String,
+      type: mongoose.Schema.Types.Mixed,
       default: '',
     },
     city: {
@@ -77,7 +78,7 @@ const userSchema = new mongoose.Schema(
       default: '',
     },
     assignedCity: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: mongoose.Schema.Types.Mixed,
       ref: 'City',
       default: null,
     },

@@ -35,7 +35,7 @@ export const resolvePartnerCities = async (partners) => {
     ...new Set(
       list
         .map((p) => p?.assignedCity)
-        .filter((v) => v && typeof v !== 'string' && mongoose.isValidObjectId(v))
+        .filter((v) => v && mongoose.isValidObjectId(v) && !/^[a-zA-Z\s]+$/.test(String(v)))
         .map(String)
     ),
   ];
@@ -43,7 +43,17 @@ export const resolvePartnerCities = async (partners) => {
   const byId = new Map(cities.map((c) => [String(c._id), c]));
   for (const p of list) {
     const ac = p?.assignedCity;
-    if (ac && typeof ac !== 'string' && byId.has(String(ac))) p.assignedCity = byId.get(String(ac));
+    if (!ac) continue;
+    // Already a populated object
+    if (typeof ac === 'object' && ac.name) continue;
+    // Valid ObjectId -> replace with { _id, name }
+    if (mongoose.isValidObjectId(ac) && byId.has(String(ac))) {
+      p.assignedCity = byId.get(String(ac));
+    }
+    // Plain string city name -> wrap as { name } so getPartnerCityName works
+    if (typeof ac === 'string' && !/^[0-9a-fA-F]{24}$/.test(ac)) {
+      p.assignedCity = { name: ac };
+    }
   }
   return partners;
 };
