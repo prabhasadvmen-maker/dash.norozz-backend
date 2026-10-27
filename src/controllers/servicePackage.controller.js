@@ -17,7 +17,12 @@ export class ServicePackageController extends BaseController {
     return this.sendSuccess(res, packages, 'Service Packages retrieved successfully');
   });
 
-  getPackageById = asyncHandler(async (req, res) => {
+  getAdminPackagesByService = asyncHandler(async (req, res) => {
+    const packages = await servicePackageService.getPackagesForService(req.params.serviceId, true);
+    return this.sendSuccess(res, packages, 'Service Packages retrieved successfully');
+  });
+
+  getPackageById =asyncHandler(async (req, res) => {
     const pkg = await servicePackageService.getPackageById(req.params.id);
     return this.sendSuccess(res, pkg, 'Package details retrieved successfully');
   });

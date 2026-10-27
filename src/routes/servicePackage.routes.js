@@ -11,6 +11,8 @@ router.get('/service/:serviceId', servicePackageController.getPackagesByService)
 router.get('/:id', servicePackageController.getPackageById);
 
 // Protected Super Admin Endpoints
+// (the public list above only ever returns active packages, so the admin manager needs its own authenticated list)
+router.get('/admin/service/:serviceId', verifyJWT, authorizeRoles(ROLES.SUPER_ADMIN), servicePackageController.getAdminPackagesByService);
 router.post('/service/:serviceId', verifyJWT, authorizeRoles(ROLES.SUPER_ADMIN), servicePackageController.createPackage);
 router.put('/:id', verifyJWT, authorizeRoles(ROLES.SUPER_ADMIN), servicePackageController.updatePackage);
 router.delete('/:id', verifyJWT, authorizeRoles(ROLES.SUPER_ADMIN), servicePackageController.deletePackage);

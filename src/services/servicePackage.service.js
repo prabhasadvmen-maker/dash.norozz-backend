@@ -134,8 +134,14 @@ export class ServicePackageService {
       );
     }
 
+    // findByIdAndUpdate skips the model's pre-validate hook, so recompute finalPrice here
+    let finalPrice = price;
+    if (discountType === 'fixed') finalPrice = Math.max(0, price - discountValue);
+    else if (discountType === 'percentage') finalPrice = Math.max(0, Math.round(price * (1 - Math.min(100, Math.max(0, discountValue)) / 100)));
+
     const updated = await servicePackageRepository.updateById(packageId, {
       ...updateData,
+      finalPrice,
       updatedBy: updatedById,
     });
 
