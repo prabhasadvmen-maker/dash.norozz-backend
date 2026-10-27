@@ -11,7 +11,7 @@ const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 export const ESCROW_STATUSES = ['AMOUNT_HELD', 'SERVICE_IN_PROGRESS'];
 export const AWAITING_SETTLEMENT_STATUSES = ['SERVICE_COMPLETED', 'SETTLEMENT_PENDING'];
 export const EARNED_STATUSES = [...AWAITING_SETTLEMENT_STATUSES, 'SETTLED'];
-const REFUND_STATUSES = ['REFUND_PENDING', 'REFUNDED'];
+export const REFUND_STATUSES = ['REFUND_PENDING', 'REFUNDED'];
 
 export const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const round = (n) => Math.round((Number(n) || 0) * 100) / 100;

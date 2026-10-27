@@ -1,6 +1,7 @@
 import { BaseController } from './base.controller.js';
 import { superAdminService } from '../services/superAdmin.service.js';
 import { superAdminReportsService } from '../services/superAdminReports.service.js';
+import { superAdminPaymentsService } from '../services/superAdminPayments.service.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 
@@ -22,6 +23,16 @@ export class SuperAdminController extends BaseController {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="norozz-${type}-report-${Date.now()}.csv"`);
     return res.status(HTTP_STATUS.OK).send(`﻿${csv}`);
+  });
+
+  getPaymentsLedger = asyncHandler(async (req, res) => {
+    const data = await superAdminPaymentsService.getLedgerSummary();
+    return this.sendSuccess(res, data, 'Platform ledger summary retrieved successfully');
+  });
+
+  getPaymentTransactions = asyncHandler(async (req, res) => {
+    const data = await superAdminPaymentsService.getTransactions(req.query);
+    return this.sendSuccess(res, data, 'Payment transactions retrieved successfully');
   });
 
   getCityAdmins = asyncHandler(async (req, res) => {
@@ -165,6 +176,11 @@ export class SuperAdminController extends BaseController {
   });
 
   // 7. SUPPORT TICKETS MANAGEMENT
+  getTicketSummary = asyncHandler(async (req, res) => {
+    const summary = await superAdminService.getTicketSummary();
+    return this.sendSuccess(res, summary, 'Support ticket summary retrieved successfully');
+  });
+
   getAllTickets = asyncHandler(async (req, res) => {
     const tickets = await superAdminService.getAllTickets(req.query);
     return this.sendSuccess(res, tickets, 'Support tickets retrieved successfully');

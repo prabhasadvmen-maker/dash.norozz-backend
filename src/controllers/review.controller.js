@@ -73,8 +73,17 @@ export class ReviewController {
   // 7. Get Admin Reviews Moderation List (GET /api/admin/reviews)
   async getAdminReviews(req, res, next) {
     try {
-      const { page, limit, status, search } = req.query;
-      const data = await reviewService.getAdminReviews({ page, limit, status, search });
+      const { page, limit, status, search, rating, reviewerRole } = req.query;
+      const data = await reviewService.getAdminReviews({ page, limit, status, search, rating, reviewerRole });
+      res.status(HTTP_STATUS.OK).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getAdminReviewSummary(req, res, next) {
+    try {
+      const data = await reviewService.getAdminReviewSummary();
       res.status(HTTP_STATUS.OK).json({ success: true, data });
     } catch (error) {
       next(error);

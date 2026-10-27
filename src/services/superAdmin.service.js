@@ -225,13 +225,86 @@ export class SuperAdminService {
 
   // 3. MASTER DIRECTORIES
   async getAllCustomers() {
+    const { Booking } = await import('../models/booking.model.js');
     const list = await userRepository.findByRole(ROLES.CUSTOMER);
-    return await this.populateCityNames(list);
+    const customers = await this.populateCityNames(list);
+
+    // Per-customer booking activity (bookings never paid for and timed out are not counted)
+    const stats = await Booking.aggregate([
+      { $match: { $expr: { $not: [{ $and: [{ $eq: ['$status', 'Cancelled'] }, { $in: ['$paymentStatus', ['pending', 'failed']] }] }] } } },
+      {
+        $group: {
+          _id: '$customer',
+          bookings: { $sum: 1 },
+          completed: { $sum: { $cond: [{ $eq: ['$status', 'Completed'] }, 1, 0] } },
+          cancelled: { $sum: { $cond: [{ $in: ['$status', ['Cancelled', 'Refunded']] }, 1, 0] } },
+          totalSpent: {
+            $sum: {
+              $cond: [
+                { $eq: ['$status', 'Completed'] },
+                { $cond: [{ $gt: ['$financialSnapshot.customerPayable', 0] }, '$financialSnapshot.customerPayable', '$amount'] },
+                0,
+              ],
+            },
+          },
+          lastBookingAt: { $max: '$createdAt' },
+        },
+      },
+    ]);
+    const byId = new Map(stats.map((x) => [String(x._id), x]));
+    return customers.map((c) => {
+      const st = byId.get(String(c._id));
+      return {
+        ...c,
+        bookingStats: {
+          bookings: st?.bookings || 0,
+          completed: st?.completed || 0,
+          cancelled: st?.cancelled || 0,
+          open: Math.max(0, (st?.bookings || 0) - (st?.completed || 0) - (st?.cancelled || 0)),
+          totalSpent: Math.round((st?.totalSpent || 0) * 100) / 100,
+          lastBookingAt: st?.lastBookingAt || null,
+        },
+      };
+    });
   }
 
   async getAllPartners() {
+    const { Booking } = await import('../models/booking.model.js');
     const list = await userRepository.findByRole(ROLES.PARTNER);
-    return await this.populateCityNames(list);
+    const partners = await this.populateCityNames(list);
+
+    // Per-partner job record and earnings (earnings = completed jobs only)
+    const stats = await Booking.aggregate([
+      { $match: { partner: { $ne: null } } },
+      {
+        $group: {
+          _id: '$partner',
+          jobs: { $sum: 1 },
+          completed: { $sum: { $cond: [{ $eq: ['$status', 'Completed'] }, 1, 0] } },
+          cancelled: { $sum: { $cond: [{ $in: ['$status', ['Cancelled', 'Refunded']] }, 1, 0] } },
+          earnings: { $sum: { $cond: [{ $eq: ['$status', 'Completed'] }, { $ifNull: ['$financialSnapshot.partnerNetEarning', 0] }, 0] } },
+          lastJobAt: { $max: '$createdAt' },
+        },
+      },
+    ]);
+    const byId = new Map(stats.map((x) => [String(x._id), x]));
+    return partners.map((p) => {
+      const st = byId.get(String(p._id));
+      const jobs = st?.jobs || 0;
+      const completed = st?.completed || 0;
+      const cancelled = st?.cancelled || 0;
+      return {
+        ...p,
+        jobStats: {
+          jobs,
+          completed,
+          cancelled,
+          open: Math.max(0, jobs - completed - cancelled),
+          earnings: Math.round((st?.earnings || 0) * 100) / 100,
+          lastJobAt: st?.lastJobAt || null,
+        },
+      };
+    });
   }
 
   async getAllBookings() {
@@ -721,32 +794,40 @@ export class SuperAdminService {
   // 7. CENTRAL SUPPORT TICKETS MANAGEMENT
   async getAllTickets(query = {}) {
     const { Ticket } = await import('../models/ticket.model.js');
+    const { escapeRegex } = await import('./cityPayments.service.js');
     const filter = {};
 
     if (query.city && query.city !== 'all') {
-      filter.city = { $regex: new RegExp(`^${query.city}$`, 'i') };
+      filter.city = { $regex: new RegExp(`^${escapeRegex(String(query.city).trim())}$`, 'i') };
     }
 
-    if (query.status && query.status !== 'all') {
-      filter.status = query.status;
-    }
+    // "Resolved" in the UI covers both finished states
+    if (query.status === 'Resolved') filter.status = { $in: ['Resolved', 'Closed'] };
+    else if (query.status && query.status !== 'all') filter.status = String(query.status);
 
     if (query.userType && query.userType !== 'all') {
-      filter.userType = query.userType;
+      filter.userType = String(query.userType);
     }
 
     if (query.search) {
-      filter.$or = [
-        { ticketId: { $regex: query.search, $options: 'i' } },
-        { subject: { $regex: query.search, $options: 'i' } },
-        { userName: { $regex: query.search, $options: 'i' } },
-        { userPhone: { $regex: query.search, $options: 'i' } },
-        { bookingId: { $regex: query.search, $options: 'i' } },
-        { city: { $regex: query.search, $options: 'i' } },
-      ];
+      const re = new RegExp(escapeRegex(String(query.search).trim().slice(0, 60)), 'i');
+      filter.$or = [{ ticketId: re }, { subject: re }, { userName: re }, { userPhone: re }, { userEmail: re }, { bookingId: re }, { city: re }];
     }
 
-    return await Ticket.find(filter).sort({ createdAt: -1 });
+    return await Ticket.find(filter).sort({ createdAt: -1 }).limit(500);
+  }
+
+  /** Counts for the stat cards; independent of whatever filter the list is showing. */
+  async getTicketSummary() {
+    const { Ticket } = await import('../models/ticket.model.js');
+    const rows = await Ticket.aggregate([{ $group: { _id: '$status', n: { $sum: 1 } } }]);
+    const by = Object.fromEntries(rows.map((r) => [r._id, r.n]));
+    return {
+      total: rows.reduce((sum, r) => sum + r.n, 0),
+      open: by.Open || 0,
+      inProgress: by['In Progress'] || 0,
+      resolved: (by.Resolved || 0) + (by.Closed || 0),
+    };
   }
 
   async updateTicketStatus(id, updateData) {

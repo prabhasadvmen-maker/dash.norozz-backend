@@ -18,6 +18,7 @@ router.delete('/:reviewId', reviewController.deleteReview);
 router.get('/user/:userId', reviewController.getUserReviews);
 
 // Admin Moderation Endpoints
+router.get('/admin/summary', authorizeRoles(ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.CITY_ADMIN), reviewController.getAdminReviewSummary);
 router.get('/admin/list', authorizeRoles(ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.CITY_ADMIN), reviewController.getAdminReviews);
 router.patch('/admin/:reviewId/status', authorizeRoles(ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.CITY_ADMIN), reviewController.moderateReviewStatus);
 

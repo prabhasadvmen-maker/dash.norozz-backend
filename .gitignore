@@ -2,3 +2,7 @@ node_modules/
 .env
 *.log
 .DS_Store
+
+# Firebase service-account keys (secret: never commit)
+norozz-firebase-adminsdk-*.json
+firebase-service-account.json

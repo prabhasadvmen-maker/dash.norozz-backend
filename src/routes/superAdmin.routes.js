@@ -25,6 +25,10 @@ router.get('/dashboard', superAdminController.getDashboard);
 router.get('/reports/overview', superAdminController.getReportsOverview);
 router.get('/reports/export', superAdminController.exportReport);
 
+// Payments & Payouts (period money flow, all-time ledger, transaction list)
+router.get('/payments/ledger', superAdminController.getPaymentsLedger);
+router.get('/payments/transactions', superAdminController.getPaymentTransactions);
+
 // City Admin Management (CRUD)
 router.get('/city-admins', superAdminController.getCityAdmins);
 router.post('/city-admins', createCityAdminRules, validate, superAdminController.createCityAdmin);
@@ -73,6 +77,7 @@ router.delete('/faqs/:id', superAdminController.deleteFaq);
 router.patch('/faqs/:id/status', superAdminController.toggleFaqStatus);
 
 // Support Ticket Management CRUD
+router.get('/tickets/summary', superAdminController.getTicketSummary);
 router.get('/tickets', superAdminController.getAllTickets);
 router.put('/tickets/:id', superAdminController.updateTicketStatus);
 router.post('/tickets/:id/reply', superAdminController.replyToTicket);

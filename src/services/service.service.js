@@ -225,6 +225,13 @@ export class ServiceService {
 
     const primaryVideo = finalVideos.length > 0 ? finalVideos[0] : (updateData.videoUrl || service.videoUrl || '');
 
+    // updateById skips the model's pre-validate hook, so keep finalPrice in step with price / discount here
+    if (updateData.price !== undefined || updateData.discount !== undefined) {
+      const price = Number(updateData.price ?? service.price) || 0;
+      const discount = Number(updateData.discount ?? service.discount) || 0;
+      updateData.finalPrice = Math.max(0, price - discount);
+    }
+
     const updated = await serviceRepository.updateById(serviceId, {
       ...updateData,
       thumbnail: imageUrl,

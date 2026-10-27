@@ -5,6 +5,7 @@ import { User } from '../models/user.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { notificationService } from './notificationService.js';
+import { escapeRegex } from './cityPayments.service.js';
 
 export class ReviewService {
   /**
@@ -298,31 +299,66 @@ export class ReviewService {
   /**
    * 7. GET ADMIN REVIEWS MODERATION LIST
    */
-  async getAdminReviews({ page = 1, limit = 20, status = null, search = '' }) {
+  async getAdminReviews({ page = 1, limit = 20, status = null, search = '', rating = null, reviewerRole = null }) {
     const filter = { isDeleted: false };
-    if (status) filter.status = status;
+    if (status) filter.status = String(status).toUpperCase();
+    if (rating && Number.isInteger(Number(rating))) filter.rating = Number(rating);
+    if (reviewerRole) filter.reviewerRole = String(reviewerRole).toUpperCase();
 
-    const pageNum = Number(page);
-    const limitNum = Number(limit);
+    const term = String(search || '').trim().slice(0, 60);
+    if (term) {
+      const re = new RegExp(escapeRegex(term), 'i');
+      const people = await User.find({ $or: [{ name: re }, { email: re }, { agencyName: re }] }).select('_id').limit(200).lean();
+      const ids = people.map((u) => u._id);
+      filter.$or = [{ comment: re }, { reviewerId: { $in: ids } }, { revieweeId: { $in: ids } }];
+    }
 
-    const reviews = await Review.find(filter)
-      .populate('reviewerId', 'name email role phone')
-      .populate('revieweeId', 'name email role phone')
-      .populate('orderId', 'bookingId amount status packageName')
-      .sort({ createdAt: -1 })
-      .skip((pageNum - 1) * limitNum)
-      .limit(limitNum);
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, Number(limit) || 20));
 
-    const total = await Review.countDocuments(filter);
+    const [reviews, total] = await Promise.all([
+      Review.find(filter)
+        .populate('reviewerId', 'name email role phone agencyName')
+        .populate('revieweeId', 'name email role phone agencyName')
+        .populate('orderId', 'bookingId amount status packageName')
+        .sort({ createdAt: -1 })
+        .skip((pageNum - 1) * limitNum)
+        .limit(limitNum),
+      Review.countDocuments(filter),
+    ]);
 
     return {
       reviews,
-      pagination: {
-        page: pageNum,
-        limit: limitNum,
-        total,
-        totalPages: Math.ceil(total / limitNum),
+      pagination: { page: pageNum, limit: limitNum, total, totalPages: Math.max(1, Math.ceil(total / limitNum)) },
+    };
+  }
+
+  /** Platform-wide numbers for the moderation page; the average only counts published reviews. */
+  async getAdminReviewSummary() {
+    const [rows] = await Review.aggregate([
+      { $match: { isDeleted: false } },
+      {
+        $facet: {
+          byStatus: [{ $group: { _id: '$status', n: { $sum: 1 } } }],
+          published: [
+            { $match: { status: 'PUBLISHED' } },
+            { $group: { _id: '$rating', n: { $sum: 1 } } },
+          ],
+        },
       },
+    ]);
+    const status = Object.fromEntries((rows?.byStatus || []).map((r) => [r._id, r.n]));
+    const dist = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    for (const r of rows?.published || []) dist[r._id] = r.n;
+    const publishedCount = Object.values(dist).reduce((a, b) => a + b, 0);
+    const weighted = Object.entries(dist).reduce((sum, [star, n]) => sum + Number(star) * n, 0);
+    return {
+      total: Object.values(status).reduce((a, b) => a + b, 0),
+      published: status.PUBLISHED || 0,
+      flagged: status.FLAGGED || 0,
+      hidden: status.HIDDEN || 0,
+      averageRating: publishedCount ? Math.round((weighted / publishedCount) * 10) / 10 : null,
+      distribution: dist,
     };
   }
 
