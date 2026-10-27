@@ -1,6 +1,7 @@
 import { serviceRepository } from '../repositories/service.repository.js';
 import { categoryRepository } from '../repositories/category.repository.js';
 import { subCategoryRepository } from '../repositories/subCategory.repository.js';
+import { servicePackageRepository } from '../repositories/servicePackage.repository.js';
 import { r2StorageService } from './r2Storage.service.js';
 import { ApiError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
@@ -215,7 +216,8 @@ export class ServiceService {
       }
     }
 
-    let imageUrl = updateData.thumbnail || updateData.image || service.thumbnail || '';
+    // An explicit thumbnail (even '') wins, so removing the last photo can clear the cover
+    let imageUrl = updateData.thumbnail ?? updateData.image ?? service.thumbnail ?? '';
     if (imageUrl && imageUrl.startsWith('data:')) {
       imageUrl = await r2StorageService.uploadBase64Media(imageUrl, 'services/images');
     }
@@ -223,7 +225,9 @@ export class ServiceService {
       imageUrl = finalGallery[0];
     }
 
-    const primaryVideo = finalVideos.length > 0 ? finalVideos[0] : (updateData.videoUrl || service.videoUrl || '');
+    const primaryVideo = finalVideos.length > 0
+      ? finalVideos[0]
+      : (Array.isArray(updateData.videos) ? '' : (updateData.videoUrl || service.videoUrl || ''));
 
     // updateById skips the model's pre-validate hook, so keep finalPrice in step with price / discount here
     if (updateData.price !== undefined || updateData.discount !== undefined) {
@@ -330,8 +334,21 @@ export class ServiceService {
 
     const total = await serviceRepository.model.countDocuments(filter);
 
+    // Attach each service's packages so the admin directory can show them without a request per card
+    const packages = await servicePackageRepository.model
+      .find({ service: { $in: items.map((s) => s._id) }, status: { $ne: 'deleted' } })
+      .sort({ sortOrder: 1, createdAt: 1 })
+      .lean();
+    const packagesByService = new Map();
+    for (const pkg of packages) {
+      const key = String(pkg.service);
+      if (!packagesByService.has(key)) packagesByService.set(key, []);
+      packagesByService.get(key).push(pkg);
+    }
+    const itemsWithPackages = items.map((s) => ({ ...s.toObject(), packages: packagesByService.get(String(s._id)) || [] }));
+
     return {
-      items,
+      items: itemsWithPackages,
       total,
       page,
       pages: Math.ceil(total / limit),
