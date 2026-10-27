@@ -8,14 +8,14 @@ export class AiChatService {
   constructor() {
     this.apiKey = process.env.GROQ_API_KEY || '';
     this.apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
-    this.models = [
-      'llama-3.3-70b-versatile',
-      'llama-3.1-8b-instant',
-      'llama3-70b-8192',
-      'llama3-8b-8192',
-      'mixtral-8x7b-32768',
-      'gemma2-9b-it'
-    ];
+    this.models = (process.env.GROQ_MODELS
+      ? process.env.GROQ_MODELS.split(',').map(m => m.trim()).filter(Boolean)
+      : [
+          'llama-3.3-70b-versatile',
+          'llama-3.1-8b-instant',
+          'openai/gpt-oss-120b',
+          'openai/gpt-oss-20b'
+        ]);
   }
 
   async getChatHistory(user, limit = 50) {
