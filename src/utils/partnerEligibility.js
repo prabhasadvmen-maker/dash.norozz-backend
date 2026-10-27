@@ -1,6 +1,9 @@
-import mongoose from 'mongoose';
 import { City } from '../models/city.model.js';
 import { isWithinOperatingRadius } from './distance.util.js';
+
+// Strict 24-hex check: mongoose.isValidObjectId() also accepts any 12-character string (e.g. a city name)
+const OBJECT_ID_RE = /^[0-9a-fA-F]{24}$/;
+const isObjectIdLike = (v) => OBJECT_ID_RE.test(String(v?._id ?? v ?? ''));
 
 const norm = (v) => String(v || '').trim().toLowerCase();
 
@@ -20,7 +23,7 @@ const hasCoords = (c) => {
 export const getPartnerCityName = (partner) => {
   const ac = partner?.assignedCity;
   if (ac && typeof ac === 'object' && ac.name) return ac.name;
-  if (typeof ac === 'string' && ac && !/^[0-9a-fA-F]{24}$/.test(ac)) return ac;
+  if (typeof ac === 'string' && ac && !OBJECT_ID_RE.test(ac)) return ac;
   return partner?.city || '';
 };
 
@@ -35,8 +38,8 @@ export const resolvePartnerCities = async (partners) => {
     ...new Set(
       list
         .map((p) => p?.assignedCity)
-        .filter((v) => v && mongoose.isValidObjectId(v) && !/^[a-zA-Z\s]+$/.test(String(v)))
-        .map(String)
+        .filter((v) => v && isObjectIdLike(v))
+        .map((v) => String(v?._id ?? v))
     ),
   ];
   const cities = ids.length ? await City.find({ _id: { $in: ids } }).select('name').lean() : [];
@@ -47,11 +50,11 @@ export const resolvePartnerCities = async (partners) => {
     // Already a populated object
     if (typeof ac === 'object' && ac.name) continue;
     // Valid ObjectId -> replace with { _id, name }
-    if (mongoose.isValidObjectId(ac) && byId.has(String(ac))) {
+    if (isObjectIdLike(ac) && byId.has(String(ac))) {
       p.assignedCity = byId.get(String(ac));
     }
     // Plain string city name -> wrap as { name } so getPartnerCityName works
-    if (typeof ac === 'string' && !/^[0-9a-fA-F]{24}$/.test(ac)) {
+    if (typeof ac === 'string' && !OBJECT_ID_RE.test(ac)) {
       p.assignedCity = { name: ac };
     }
   }
