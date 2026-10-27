@@ -14,8 +14,15 @@ export const rewriteLocalMediaUrls = (req, res, next) => {
 
   res.json = (body) => {
     if (body === undefined || body === null) return originalJson(body);
-    const text = JSON.stringify(body);
-    return originalJson(text.includes('/api/media/') ? JSON.parse(text.replace(LOCAL_MEDIA_URL, `${origin}/api/media/`)) : body);
+    try {
+      const text = JSON.stringify(body);
+      if (typeof text === 'string' && text.includes('/api/media/')) {
+        return originalJson(JSON.parse(text.replace(LOCAL_MEDIA_URL, `${origin}/api/media/`)));
+      }
+    } catch {
+      // never fail a response over URL rewriting; send it untouched
+    }
+    return originalJson(body);
   };
   next();
 };
