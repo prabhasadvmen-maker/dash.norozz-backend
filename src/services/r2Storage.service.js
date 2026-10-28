@@ -12,6 +12,9 @@ const R2_BUCKET = process.env.R2_BUCKET;
 const s3Client = new S3Client({
   region: 'auto',
   endpoint: R2_ENDPOINT,
+  // Newer SDKs bake an empty-body CRC32 into presigned URLs, which breaks browser PUT uploads to R2
+  requestChecksumCalculation: 'WHEN_REQUIRED',
+  responseChecksumValidation: 'WHEN_REQUIRED',
   credentials: {
     accessKeyId: R2_ACCESS_KEY_ID,
     secretAccessKey: R2_SECRET_ACCESS_KEY,
