@@ -52,35 +52,7 @@ export class CustomerDashboardService {
     const { Banner } = await import('../models/banner.model.js');
     let banners = await Banner.find({ isActive: true }).sort({ displayOrder: 1, createdAt: -1 });
 
-    if (!banners || banners.length === 0) {
-      banners = [
-        {
-          _id: 'default_1',
-          title: 'AC Jet Deep Cleaning',
-          subtitle: 'Flat 50% OFF on 1st Service',
-          badgeText: 'SUMMER SPECIAL',
-          couponCode: 'SUMMER50',
-          targetType: 'category',
-          targetValue: 'AC & Appliance Repair',
-          gradientBg: 'linear-gradient(135deg, #09331E 0%, #064e3b 50%, #0f172a 100%)',
-          imageUrl: '',
-          isActive: true,
-        },
-        {
-          _id: 'default_2',
-          title: 'Full House Deep Cleaning',
-          subtitle: 'Save ₹500 Instant Discount',
-          badgeText: 'HOT DEAL',
-          couponCode: 'CLEAN500',
-          targetType: 'service',
-          targetValue: 'Full Home Deep Cleaning 3BHK',
-          gradientBg: 'linear-gradient(135deg, #1e3a8a 0%, #2563eb 50%, #7c3aed 100%)',
-          imageUrl: '',
-          isActive: true,
-        },
-      ];
-    }
-
+    // No invented banners: with none configured the app shows its own default hero
     return banners;
   }
 

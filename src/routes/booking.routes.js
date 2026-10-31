@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { bookingController } from '../controllers/booking.controller.js';
 import {
   createBookingRules,
+  quoteBookingRules,
   payBookingRules,
   assignBookingRules,
   rateBookingRules,
@@ -22,6 +23,7 @@ router.use(verifyJWT);
 // ── Customer ──
 router.get('/my-bookings', authorizeRoles(ROLES.CUSTOMER), bookingController.getMyBookings);
 router.get('/partner-profile/:partnerId', authorizeRoles(ROLES.CUSTOMER, ...ADMINS), bookingController.getPartnerPublicProfile);
+router.post('/quote', authorizeRoles(ROLES.CUSTOMER), quoteBookingRules, validate, bookingController.quoteBooking);
 router.post('/', authorizeRoles(ROLES.CUSTOMER), createBookingRules, validate, bookingController.createBooking);
 router.post('/:id/pay', authorizeRoles(ROLES.CUSTOMER), payBookingRules, validate, bookingController.processPayment);
 router.post('/:id/rate', authorizeRoles(ROLES.CUSTOMER), rateBookingRules, validate, bookingController.rateBooking);

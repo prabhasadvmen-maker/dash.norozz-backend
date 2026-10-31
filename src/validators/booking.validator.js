@@ -13,6 +13,14 @@ export const createBookingRules = [
   body('paymentMethod').optional().trim(),
 ];
 
+export const quoteBookingRules = [
+  body('category').isMongoId().withMessage('Valid Category Mongo ID is required'),
+  body('service').isMongoId().withMessage('Valid Service Mongo ID is required'),
+  body('packageId').optional({ nullable: true }).isMongoId().withMessage('Valid Package ID is required'),
+  body('couponCode').optional({ nullable: true }).trim(),
+  body('useStarterPack').optional().isBoolean(),
+];
+
 export const payBookingRules = [
   body('paymentMethod').optional().trim(),
 ];

@@ -9,6 +9,11 @@ export class BookingController extends BaseController {
     return this.sendCreated(res, booking, 'Booking created successfully');
   });
 
+  quoteBooking = asyncHandler(async (req, res) => {
+    const quote = await bookingService.quoteBooking(req.user, req.body);
+    return this.sendSuccess(res, quote, 'Price quote calculated');
+  });
+
   processPayment = asyncHandler(async (req, res) => {
     const result = await bookingService.processPayment(req.params.id, req.user, req.body.paymentMethod);
     return this.sendSuccess(res, result, result.message);

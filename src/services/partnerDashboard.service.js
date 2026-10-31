@@ -830,6 +830,7 @@ export class PartnerDashboardService {
                 serviceId: srv._id,
                 packageId: pkg._id,
                 name: `${srv.name} (${pkg.title})`,
+                serviceName: srv.name,
                 title: pkg.title,
                 desc: pkg.description || srv.description || 'Professional add-on service package',
                 price: pkg.finalPrice || pkg.price || srv.finalPrice || srv.price || 499,
@@ -843,6 +844,7 @@ export class PartnerDashboardService {
               serviceId: srv._id,
               packageId: null,
               name: srv.name,
+              serviceName: srv.name,
               title: 'Standard',
               desc: srv.description || 'Standard extra service add-on',
               price: srv.finalPrice || srv.price || 399,
@@ -854,8 +856,10 @@ export class PartnerDashboardService {
       }
     }
 
-    // 3. If offeredList is empty or booking category query
-    if (offeredList.length === 0) {
+    // 3. A partner with no restriction configured may add any active service of the booking's category.
+    //    A partner whose configured services are all inactive/deleted gets none (the add endpoint would refuse them).
+    const hasConfiguredServices = Array.isArray(partner?.offeredServices) && partner.offeredServices.length > 0;
+    if (offeredList.length === 0 && !hasConfiguredServices) {
       const filter = { status: 'active' };
       if (booking?.category?._id || booking?.category) {
         filter.category = booking.category._id || booking.category;
@@ -871,6 +875,7 @@ export class PartnerDashboardService {
               serviceId: srv._id,
               packageId: pkg._id,
               name: `${srv.name} (${pkg.title})`,
+              serviceName: srv.name,
               title: pkg.title,
               desc: pkg.description || srv.description || 'Professional extra service package',
               price: pkg.finalPrice || pkg.price || 499,
@@ -884,6 +889,7 @@ export class PartnerDashboardService {
             serviceId: srv._id,
             packageId: null,
             name: srv.name,
+            serviceName: srv.name,
             title: 'Standard',
             desc: srv.description || 'Professional extra service add-on',
             price: srv.finalPrice || srv.price || 399,
@@ -891,24 +897,6 @@ export class PartnerDashboardService {
             category: 'Catalog Offered Service'
           });
         }
-      }
-    }
-
-    // 4. Default Domain Fallbacks if less than 3
-    if (offeredList.length < 3) {
-      const bTitle = (booking?.serviceName || booking?.service?.name || '').toLowerCase();
-      if (bTitle.includes('salon') || bTitle.includes('hair') || bTitle.includes('beauty') || bTitle.includes('nail') || bTitle.includes('shave') || bTitle.includes('trim')) {
-        offeredList.push(
-          { id: 'off_salon_1', serviceId: null, packageId: null, name: '✨ Nail Art (Basic Nail Art)', title: 'Basic Nail Art', desc: 'Professional glitter & gel polish styling', price: 499, finalPrice: 499, category: 'Salon & Beauty' },
-          { id: 'off_salon_2', serviceId: null, packageId: null, name: '💆 Organic Herbal Hair Spa', title: 'Hair Spa', desc: 'Nourishing deep conditioning treatment', price: 799, finalPrice: 799, category: 'Salon & Beauty' },
-          { id: 'off_salon_3', serviceId: null, packageId: null, name: '✨ Fruit Facial Glow Clean-up', title: 'Fruit Facial', desc: 'Instant radiance & dead skin removal', price: 599, finalPrice: 599, category: 'Salon & Beauty' }
-        );
-      } else {
-        offeredList.push(
-          { id: 'off_ac_1', serviceId: null, packageId: null, name: '❄️ Refrigerant Gas Refill (R32)', title: 'Gas Refill', desc: 'Eco-friendly high cooling gas top-up', price: 1200, finalPrice: 1200, category: 'AC & Appliance' },
-          { id: 'off_ac_2', serviceId: null, packageId: null, name: '🧼 AC Foam Filter Deep Cleaning', title: 'Foam Wash', desc: 'Antibacterial jet spray foam wash', price: 400, finalPrice: 400, category: 'AC & Appliance' },
-          { id: 'off_ac_3', serviceId: null, packageId: null, name: '⚡ Voltage Stabilizer Health Audit', title: 'Stabilizer Check', desc: 'Safety fuse & voltage output testing', price: 200, finalPrice: 200, category: 'AC & Appliance' }
-        );
       }
     }
 
@@ -1142,16 +1130,25 @@ export class PartnerDashboardService {
       catMap[catName].revenue += net;
     });
 
-    const categoryPerformance = Object.values(catMap);
+    const categoryPerformance = Object.values(catMap).sort((a, b) => b.revenue - a.revenue);
+
+    // Numeric growth (null when the previous period has no data to compare against)
+    const growthPct = (cur, prev) => (prev > 0 ? Math.round(((cur - prev) / prev) * 100) : null);
 
     return {
       period,
+      periodLabel: startDate.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }),
+      prevPeriodLabel: prevStartDate.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }),
       jobsCompleted,
+      prevJobsCompleted,
+      jobsGrowthPct: growthPct(jobsCompleted, prevJobsCompleted),
       jobsGrowthText,
       totalRevenue,
       prevRevenue,
+      revenueGrowthPct: growthPct(totalRevenue, prevRevenue),
       revenueGrowthText,
       avgRating: p?.totalRatings > 0 ? p.averageRating : 0,
+      totalRatings: p?.totalRatings || 0,
       ratingText: 'Stable',
       onTimeArrivalRate: 'N/A',
       onTimeArrivalText: 'Not tracked yet',

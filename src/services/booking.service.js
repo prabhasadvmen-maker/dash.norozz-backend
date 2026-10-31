@@ -163,12 +163,9 @@ export class BookingService {
     return { pack, price: Number(pack.offerPrice) };
   }
 
-  // ─────────────────────────── 1. CREATE BOOKING ───────────────────────────
-  async createBooking(customerUser, bookingData) {
-    if (customerUser.role !== ROLES.CUSTOMER) {
-      throw new ApiError(HTTP_STATUS.FORBIDDEN, 'Only customers can create bookings.');
-    }
-
+  // Authoritative pricing for a booking request. Used by both the quote endpoint and createBooking, so the
+  // amount a customer is shown can never differ from the amount they are charged.
+  async resolvePricing(customerUser, bookingData) {
     const category = await categoryRepository.findById(bookingData.category);
     if (!category || category.status === 'deleted') {
       throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Selected category not found');
@@ -222,6 +219,41 @@ export class BookingService {
       couponCode = priced.code;
     }
 
+    const financialSnapshot = await financialCalculatorService.calculateBreakdown({
+      servicePrice,
+      extraServicesPrice: 0,
+      categoryId: category._id,
+      discountAmount,
+      discountBearBy: 'NOROZZ',
+    });
+    return { category, service, selectedPackage, basePrice, servicePrice, starterPackApplied, couponCode, discountAmount, financialSnapshot };
+  }
+
+  async quoteBooking(customerUser, bookingData) {
+    if (customerUser.role !== ROLES.CUSTOMER) {
+      throw new ApiError(HTTP_STATUS.FORBIDDEN, 'Only customers can request a price quote.');
+    }
+    const p = await this.resolvePricing(customerUser, bookingData);
+    const f = p.financialSnapshot;
+    return {
+      servicePrice: p.servicePrice,
+      platformFee: f.customerPlatformFee,
+      discount: p.discountAmount,
+      total: f.customerPayable,
+      couponCode: p.couponCode,
+      starterPackApplied: p.starterPackApplied,
+    };
+  }
+
+  // ─────────────────────────── 1. CREATE BOOKING ───────────────────────────
+  async createBooking(customerUser, bookingData) {
+    if (customerUser.role !== ROLES.CUSTOMER) {
+      throw new ApiError(HTTP_STATUS.FORBIDDEN, 'Only customers can create bookings.');
+    }
+
+    const { category, service, selectedPackage, basePrice, starterPackApplied, couponCode, financialSnapshot } =
+      await this.resolvePricing(customerUser, bookingData);
+
     // Location / schedule
     const city = String(bookingData.city || bookingData.address?.city || customerUser.city || '').trim();
     const addressLine = String(bookingData.addressLine || bookingData.address?.addressLine || '').trim();
@@ -237,13 +269,6 @@ export class BookingService {
     const coords = validCoord(bookingData.locationCoordinates || bookingData.address?.locationCoordinates) ||
       validCoord({ lat: bookingData.lat ?? bookingData.latitude, lng: bookingData.lng ?? bookingData.longitude });
 
-    const financialSnapshot = await financialCalculatorService.calculateBreakdown({
-      servicePrice,
-      extraServicesPrice: 0,
-      categoryId: category._id,
-      discountAmount,
-      discountBearBy: 'NOROZZ',
-    });
 
     const packageSnapshot = selectedPackage
       ? {
@@ -486,14 +511,17 @@ export class BookingService {
   // ───────────── 4. PARTNER ACCEPTS AN ASSIGNED JOB (Assigned -> Accepted) ─────────────
   async acceptBooking(bookingId, partnerUser) {
     const booking = await Booking.findOneAndUpdate(
-      { _id: bookingId, partner: partnerUser._id, status: 'Assigned' },
+      { _id: bookingId, partner: partnerUser._id, status: 'Assigned', financialStatus: 'AMOUNT_HELD' },
       { $set: { status: 'Accepted' } },
       { new: true }
     );
     if (!booking) {
-      const existing = await Booking.findById(bookingId).select('partner status');
+      const existing = await Booking.findById(bookingId).select('partner status financialStatus');
       if (!existing || String(existing.partner) !== String(partnerUser._id)) {
         throw new ApiError(HTTP_STATUS.FORBIDDEN, 'You are not assigned to this booking');
+      }
+      if (existing.status === 'Assigned' && existing.financialStatus !== 'AMOUNT_HELD') {
+        throw new ApiError(HTTP_STATUS.CONFLICT, 'The customer payment for this booking is not confirmed, so it cannot be accepted.');
       }
       throw new ApiError(HTTP_STATUS.CONFLICT, `Booking cannot be accepted from status '${existing.status}'`);
     }
@@ -609,7 +637,7 @@ export class BookingService {
       targetService = await serviceRepository.model.findOne({ name: { $regex: new RegExp(`^${escapeRegex(String(name).trim())}$`, 'i') } });
     }
     if (!targetService || targetService.status === 'deleted') {
-      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Valid service not found');
+      throw new ApiError(HTTP_STATUS.NOT_FOUND, 'This service is no longer available, so it cannot be added to the booking.');
     }
 
     const partnerDoc = await User.findById(partnerUser._id).select('offeredServices');
@@ -751,6 +779,10 @@ export class BookingService {
       }
       if ((booking.extraServices || []).some((i) => i.paymentStatus !== 'PAID')) {
         throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Please collect and confirm payment for the extra services before completing the job.');
+      }
+      // Check the held payment first: the status flip below must never happen if settlement is impossible
+      if (booking.financialStatus !== 'AMOUNT_HELD') {
+        throw new ApiError(HTTP_STATUS.CONFLICT, 'The customer payment for this booking is not held, so it cannot be completed. Please contact support.');
       }
       const done = await Booking.findOneAndUpdate(
         { _id: booking._id, partner: partnerUser._id, status: 'Started', otpVerified: true },
