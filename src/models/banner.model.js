@@ -4,17 +4,18 @@ const bannerSchema = new mongoose.Schema(
   {
     title: {
       type: String,
-      required: true,
       trim: true,
+      default: '',
     },
     subtitle: {
       type: String,
       trim: true,
+      default: '',
     },
     badgeText: {
       type: String,
       trim: true,
-      default: 'SPECIAL OFFER',
+      default: '',
     },
     imageUrl: {
       type: String,

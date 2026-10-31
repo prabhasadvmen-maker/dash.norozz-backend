@@ -525,14 +525,10 @@ export class SuperAdminService {
     const { Banner } = await import('../models/banner.model.js');
     const { title, subtitle, badgeText, imageUrl, gradientBg, targetType, targetValue, couponCode, isActive, displayOrder } = data;
 
-    if (!title) {
-      throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Banner title is required');
-    }
-
     const banner = await Banner.create({
-      title,
+      title: title || '',
       subtitle: subtitle || '',
-      badgeText: badgeText || 'SPECIAL OFFER',
+      badgeText: badgeText || '',
       imageUrl: imageUrl || '',
       gradientBg: gradientBg || 'linear-gradient(135deg, #09331E 0%, #064e3b 50%, #0f172a 100%)',
       targetType: targetType || 'none',
